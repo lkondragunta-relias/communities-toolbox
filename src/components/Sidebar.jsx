@@ -22,7 +22,7 @@ const ICONS = {
 const NAV = [
   { id: "overview", label: "Overview" },
   { id: "timeline", label: "Roadmap" },
-  { id: "table", label: "Projects" },
+  // { id: "table", label: "Projects" }, // hidden for now
   { id: "sites", label: "Sites & Cookiebot" },
   { id: "settings", label: "Settings" },
 ];
