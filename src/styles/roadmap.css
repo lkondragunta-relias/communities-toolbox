@@ -1947,6 +1947,7 @@ html, body, #root { height: 100%; }
   text-align: left;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
+  text-decoration: none;
 }
 
 .sidebar__link:hover {

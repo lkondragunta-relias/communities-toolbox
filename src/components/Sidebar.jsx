@@ -17,6 +17,9 @@ const ICONS = {
   settings: (
     <path d="M12 8a4 4 0 100 8 4 4 0 000-8zm8.9 5.6.1-1.6-.1-1.6 1.7-1.3-1.7-3-2 .8a7 7 0 0 0-2.8-1.6L13.5 2h-3l-.3 2.3A7 7 0 0 0 7.4 6l-2-.8-1.7 3 1.7 1.3-.1 1.6.1 1.6-1.7 1.3 1.7 3 2-.8a7 7 0 0 0 2.8 1.6l.3 2.3h3l.3-2.3a7 7 0 0 0 2.8-1.6l2 .8 1.7-3-1.7-1.3z" />
   ),
+  accessibility: (
+    <path d="M12 2a2 2 0 110 4 2 2 0 010-4zM3 8h18v2h-6v12h-2v-6h-2v6H9V10H3V8z" />
+  ),
 };
 
 const NAV = [
@@ -24,6 +27,11 @@ const NAV = [
   { id: "timeline", label: "Roadmap" },
   // { id: "table", label: "Projects" }, // hidden for now
   { id: "sites", label: "Sites & Cookiebot" },
+  {
+    id: "accessibility",
+    label: "Accessibility",
+    href: "https://a11y-monitor-seven.vercel.app/dashboard",
+  },
   { id: "settings", label: "Settings" },
 ];
 
@@ -50,19 +58,33 @@ export default function Sidebar({
       </div>
 
       <nav className="sidebar__nav" aria-label="Primary">
-        {NAV.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            title={collapsed ? item.label : undefined}
-            className={`sidebar__link${view === item.id ? " is-active" : ""}`}
-            aria-current={view === item.id ? "page" : undefined}
-            onClick={() => onNavigate(item.id)}
-          >
-            <NavIcon name={item.id} />
-            <span className="sidebar__link-text">{item.label}</span>
-          </button>
-        ))}
+        {NAV.map((item) =>
+          item.href ? (
+            <a
+              key={item.id}
+              href={item.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={collapsed ? item.label : undefined}
+              className="sidebar__link"
+            >
+              <NavIcon name={item.id} />
+              <span className="sidebar__link-text">{item.label}</span>
+            </a>
+          ) : (
+            <button
+              key={item.id}
+              type="button"
+              title={collapsed ? item.label : undefined}
+              className={`sidebar__link${view === item.id ? " is-active" : ""}`}
+              aria-current={view === item.id ? "page" : undefined}
+              onClick={() => onNavigate(item.id)}
+            >
+              <NavIcon name={item.id} />
+              <span className="sidebar__link-text">{item.label}</span>
+            </button>
+          )
+        )}
       </nav>
 
       <div className="sidebar__footer">
