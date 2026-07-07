@@ -1,0 +1,7 @@
+Title,Color,SortOrder
+In Progress,#3b82f6,0
+Close to done,#86efac,1
+At Risk,#fca5a5,2
+Done,#16a34a,3
+Future,#eab308,4
+Paused,#4b5563,5

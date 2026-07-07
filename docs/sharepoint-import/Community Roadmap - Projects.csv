@@ -1,0 +1,8 @@
+Title,Domain,Name,Description,TimelineStart,TimelineEnd,Status,Priority,Owner,Teams,Link,Progress
+PLAT-1,platform,Auth revamp,Replace legacy auth with SSO and MFA across all apps.,2026-01-12,2026-03-28,In Progress,High,Jane Doe,core,https://example.com/projects/plat-1,45
+PLAT-2,platform,API gateway,"Centralize routing, rate limiting, and observability.",2026-03-02,2026-06-30,Future,Medium,Sam Lee,"core,data",,0
+PLAT-3,platform,Cost optimization,Right-size infrastructure and cut idle spend.,2026-07-01,2026-09-15,At Risk,High,Priya N.,core,,10
+MKT-1,marketing,Brand refresh,"New visual identity, logo, and site theme.",2026-02-01,2026-04-30,Close to done,Medium,Alex Park,design,https://example.com/projects/mkt-1,80
+MKT-2,marketing,Q3 campaign,Multi-channel launch campaign for the new release.,2026-06-15,2026-09-30,Future,Low,Jordan Kim,"design,data",,0
+MOB-1,mobile,Offline mode,Local caching and sync for spotty connectivity.,2026-01-20,2026-05-10,In Progress,High,Chris Wong,"core,qa",,55
+MOB-2,mobile,Accessibility pass,WCAG AA audit and remediation across screens.,2026-05-01,2026-07-31,Done,Medium,Robin Shah,"design,qa",,100
