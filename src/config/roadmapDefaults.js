@@ -1,5 +1,5 @@
 /** Merged on top of Google Sheets data (meta + team filter definitions). */
-export const ROADMAP_TITLE = "Community Toolbox";
+export const ROADMAP_TITLE = "Communities Toolbox";
 
 export const ROADMAP_DEFAULTS = {
   meta: {},

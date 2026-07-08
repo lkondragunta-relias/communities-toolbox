@@ -27,6 +27,7 @@ export default function AdminModal({
   mode = "add",
   initialValues = null,
   domains,
+  domainLabels = {},
   existingIdsByDomain = {},
   teamOptions = [],
   validTeamIds = [],
@@ -150,7 +151,7 @@ export default function AdminModal({
   );
 
   return (
-    <div className="admin-modal" role="presentation" onClick={onClose}>
+    <div className="admin-modal" role="presentation">
       <aside
         ref={panelRef}
         tabIndex={-1}
@@ -158,7 +159,6 @@ export default function AdminModal({
         role="dialog"
         aria-labelledby="admin-modal-title"
         aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
       >
         <header className="admin-modal__header">
           <div className="admin-modal__header-text">
@@ -225,7 +225,7 @@ export default function AdminModal({
               >
                 {domains.map((tab) => (
                   <option key={tab} value={tab}>
-                    {formatDomainLabel(tab)}
+                    {domainLabels[tab] || formatDomainLabel(tab)}
                   </option>
                 ))}
               </select>

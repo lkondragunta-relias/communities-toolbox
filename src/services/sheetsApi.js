@@ -69,10 +69,14 @@ export function normalizeRemotePayload(payload) {
     priorities: payload.priorities || [],
   };
 
+  const domainDefs = [];
   (payload.domains || []).forEach((d) => {
     const key = String(d.id || d.name || "").trim().toLowerCase();
-    if (key) out[key] = [];
+    if (!key) return;
+    out[key] = [];
+    domainDefs.push({ id: key, name: d.name || key.charAt(0).toUpperCase() + key.slice(1) });
   });
+  out.domains = domainDefs;
 
   payload.projects.forEach((p) => {
     const domain = String(p.domain || "").trim().toLowerCase();

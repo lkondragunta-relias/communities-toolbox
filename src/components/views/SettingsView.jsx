@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   getDomainKeys,
+  getDomainNameMap,
   formatDomainLabel,
   parseInitiativeTeams,
   RESERVED_DATA_KEYS,
@@ -139,7 +140,11 @@ function SettingsSection({
 }
 
 export default function SettingsView({ data, adminToken, applyRoadmap, refetch }) {
-  const domains = getDomainKeys(data).map((id) => ({ id, label: formatDomainLabel(id) }));
+  const domainNames = getDomainNameMap(data);
+  const domains = getDomainKeys(data).map((id) => ({
+    id,
+    label: domainNames[id] || formatDomainLabel(id),
+  }));
   const teams = (data.teams || []).map((t) => ({ id: t.id, label: t.label || t.id, color: t.color }));
   const statuses = (data.statuses || []).map((s) => ({ id: s.id || s.label, label: s.label, color: s.color }));
   const priorities = (data.priorities || []).map((p) => ({ id: p.id || p.label, label: p.label, color: p.color }));

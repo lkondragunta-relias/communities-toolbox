@@ -33,6 +33,7 @@ import {
 import {
   getQuarterRangeLabel,
   getDomainKeys,
+  getDomainNameMap,
   INITIAL_FILTER_STATE,
 } from "./utils/roadmapUtils";
 
@@ -526,6 +527,7 @@ export default function App() {
           initialValues={addPrefill}
           existingIdsByDomain={existingIdsByDomain}
           domains={getDomainKeys(data)}
+          domainLabels={getDomainNameMap(data)}
           teamOptions={getTeamOptionsForAdmin(data)}
           validTeamIds={getValidTeamIds(data)}
           statusOptions={data.statuses || []}
@@ -545,6 +547,7 @@ export default function App() {
           mode="edit"
           initialValues={editTarget.values}
           domains={getDomainKeys(data)}
+          domainLabels={getDomainNameMap(data)}
           teamOptions={getTeamOptionsForAdmin(data)}
           validTeamIds={getValidTeamIds(data)}
           statusOptions={data.statuses || []}

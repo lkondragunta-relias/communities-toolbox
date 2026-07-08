@@ -130,6 +130,7 @@ export async function getRoadmap() {
 
   const payload = {
     teams: teams.map((t) => ({ ...t })),
+    domains: domains.map((d) => ({ id: d.id, name: d.name || d.id })),
     statuses: statusDefs.map((s) => ({ id: s.id, label: s.label, color: s.color })),
     priorities: priorityDefs.map((p) => ({ id: p.id, label: p.label, color: p.color })),
   };

@@ -1,6 +1,7 @@
 :root {
   --label-width: 140px;
-  --quarter-min: 120px;
+  --quarter-min: 300px;
+  --roadmap-year-h: 35px;
   --initiative-bar-height: 40px;
   --initiative-lane-gap: 12px;
   --initiative-lane-step: calc(var(--initiative-bar-height) + var(--initiative-lane-gap));
@@ -506,7 +507,8 @@ body {
 
 .roadmap__scroll {
   overflow-x: auto;
-  overflow-y: hidden;
+  overflow-y: auto;
+  max-height: calc(100vh - 210px);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-elevated);
@@ -553,14 +555,19 @@ body {
 
 .roadmap__corner {
   position: sticky;
+  top: 0;
   left: 0;
-  z-index: 3;
+  z-index: 5;
   background: var(--bg-elevated);
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
 
 .year-cell {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: var(--roadmap-year-h);
   padding: 10px 8px;
   font-size: 0.8rem;
   font-weight: 600;
@@ -571,6 +578,9 @@ body {
 }
 
 .quarter-cell {
+  position: sticky;
+  top: var(--roadmap-year-h);
+  z-index: 4;
   padding: 8px;
   font-size: 0.75rem;
   font-weight: 500;
@@ -1908,8 +1918,8 @@ html, body, #root { height: 100%; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 31px;
+  height: 31px;
   border-radius: 7px;
   background: linear-gradient(135deg, #287339, #34954a);
   flex-shrink: 0;

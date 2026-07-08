@@ -5,6 +5,7 @@ export const RESERVED_DATA_KEYS = new Set([
   "quarters",
   "teams",
   "cohorts",
+  "domains",
   "statuses",
   "priorities",
   "cookiebotSites",
@@ -39,13 +40,30 @@ export function formatDomainLabel(domainId) {
   return domainId.charAt(0).toUpperCase() + domainId.slice(1);
 }
 
+/** Map of domain id -> display name, from the domain definitions in the payload. */
+export function getDomainNameMap(data) {
+  const map = {};
+  if (Array.isArray(data?.domains)) {
+    data.domains.forEach((d) => {
+      if (d && d.id) map[d.id] = d.name || formatDomainLabel(d.id);
+    });
+  }
+  return map;
+}
+
+/** Display name for a domain: its defined name, falling back to the capitalized id. */
+export function getDomainLabel(data, domainId) {
+  return getDomainNameMap(data)[domainId] || formatDomainLabel(domainId);
+}
+
 /** @deprecated use formatDomainLabel */
 export const formatTeamLabel = formatDomainLabel;
 
 export function getDomainsForFilter(data) {
+  const domainNames = getDomainNameMap(data);
   const domains = [{ id: "all", label: "All domains" }];
   getDomainKeys(data).forEach((id) => {
-    domains.push({ id, label: formatDomainLabel(id) });
+    domains.push({ id, label: domainNames[id] || formatDomainLabel(id) });
   });
   return domains;
 }
@@ -344,9 +362,10 @@ export function getAllInitiatives(data) {
 
 export function getRoadmapRows(data, quarters) {
   const statusDefs = getStatusDefinitions(data);
+  const domainNames = getDomainNameMap(data);
   return getDomainKeys(data).map((key) => ({
     id: key,
-    label: formatDomainLabel(key),
+    label: domainNames[key] || formatDomainLabel(key),
     initiatives: assignLanes(
       (data[key] || []).map((item) => withDefaultColor(item, statusDefs)),
       quarters
