@@ -26,7 +26,7 @@ const NAV = [
   { id: "overview", label: "Overview" },
   { id: "timeline", label: "Roadmap" },
   // { id: "table", label: "Projects" }, // hidden for now
-  { id: "sites", label: "Sites & Cookiebot" },
+  { id: "sites", label: "Cookiebot" },
   {
     id: "accessibility",
     label: "Accessibility",

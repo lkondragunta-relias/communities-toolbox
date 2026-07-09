@@ -41,7 +41,7 @@ const VIEW_TITLES = {
   overview: "Overview",
   timeline: "Roadmap",
   table: "Projects",
-  sites: "Sites & Cookiebot",
+  sites: "Cookiebot",
   settings: "Settings",
 };
 
