@@ -1,6 +1,7 @@
 :root {
   --label-width: 140px;
-  --quarter-min: 300px;
+  /* Keep quarter columns comfortably wide without over-expanding the timeline. */
+  --quarter-min: 500px;
   --roadmap-year-h: 35px;
   --initiative-bar-height: 40px;
   --initiative-lane-gap: 12px;
