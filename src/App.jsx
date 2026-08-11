@@ -12,6 +12,7 @@ import Filters from "./components/Filters";
 import RoadmapGrid from "./components/RoadmapGrid";
 import ProjectsTable from "./components/ProjectsTable";
 import OverviewView from "./components/views/OverviewView";
+import IncidentsView from "./components/views/IncidentsView";
 import SitesView from "./components/views/SitesView";
 import SettingsView from "./components/views/SettingsView";
 import ProjectDetail from "./components/ProjectDetail";
@@ -41,9 +42,13 @@ const VIEW_TITLES = {
   overview: "Overview",
   timeline: "Roadmap",
   table: "Projects",
+  incidents: "Communities Operations Timeline",
   sites: "Cookiebot",
   settings: "Settings",
 };
+
+/** Views that own their own header actions, so the topbar Add button hides. */
+const SELF_MANAGED_VIEWS = new Set(["incidents", "sites", "settings"]);
 
 const VIEW_STORAGE_KEY = "roadmap_active_view";
 const SIDEBAR_STORAGE_KEY = "roadmap_sidebar_collapsed";
@@ -383,7 +388,7 @@ export default function App() {
   const subtitle =
     view === "timeline" && quarters.length ? getQuarterRangeLabel(quarters) : "";
   const showFilters = view === "timeline" || view === "table";
-  const showTopbarAdd = showAdmin && view !== "sites" && view !== "settings";
+  const showTopbarAdd = showAdmin && !SELF_MANAGED_VIEWS.has(view);
 
   return (
     <div className="app">
@@ -435,6 +440,16 @@ export default function App() {
           {data && !error ? (
             view === "overview" ? (
               <OverviewView data={data} onSelectProject={handleSelectProject} />
+            ) : view === "incidents" ? (
+              <IncidentsView
+                data={data}
+                adminUnlocked={adminUnlocked}
+                adminToken={adminToken}
+                onUnlock={handleAdminUnlock}
+                onLock={handleAdminLock}
+                applyRoadmap={applyRoadmap}
+                refetch={refetch}
+              />
             ) : view === "sites" ? (
               <SitesView
                 adminUnlocked={adminUnlocked}

@@ -1,0 +1,6 @@
+ID,Date,Domain,Title,Type,Severity,Duration,Customer Impact,Revenue Impact,Status,Notes,Links
+INC-0001,2026-06-08 07:10,FreeCME,SSO Failure,Outage,High,2h,Users unable to log in,$,Resolved,Akamai security configuration blocked the IdP callback.,Slack
+INC-0002,2026-06-25 14:30,Relias Academy,Session Expiry,Outage,Critical,33h,Login & Checkout,"$48,000",Resolved,Internal security scan during the Akamai migration. One whitelisted IP generated high-volume traffic.,Incident Report / Slack
+INC-0003,2026-06-29 09:00,Nurse,Stripe Webhook Failure,Integration,High,4h,Subscription payments failed,"$12,400",Resolved,Missing Stripe headers after the Akamai migration.,Ticket
+INC-0004,2026-07-02 11:00,WCEI,Events Missing,Outage,High,2h,Live classes unavailable,"$6,250",Resolved,GET requests rejected by Akamai.,Jira
+INC-0005,2026-07-14 22:00,Relias Academy,Akamai Migration — cutover,Migration,Low,3h,No customer impact,,Resolved,Planned DNS cutover window.,

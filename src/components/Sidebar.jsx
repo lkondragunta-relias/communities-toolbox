@@ -20,12 +20,16 @@ const ICONS = {
   accessibility: (
     <path d="M12 2a2 2 0 110 4 2 2 0 010-4zM3 8h18v2h-6v12h-2v-6h-2v6H9V10H3V8z" />
   ),
+  incidents: (
+    <path d="M12 2 1 21h22L12 2zm0 5.5 7.1 12.3H4.9L12 7.5zM11 10h2v5h-2v-5zm0 6.5h2V19h-2v-2.5z" />
+  ),
 };
 
 const NAV = [
   { id: "overview", label: "Overview" },
   { id: "timeline", label: "Roadmap" },
   // { id: "table", label: "Projects" }, // hidden for now
+  { id: "incidents", label: "Operations" },
   { id: "sites", label: "Cookiebot" },
   {
     id: "accessibility",

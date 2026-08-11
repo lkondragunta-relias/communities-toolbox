@@ -106,6 +106,7 @@ export function normalizeRemotePayload(payload) {
 
   if (Array.isArray(payload.cookiebotSites)) out.cookiebotSites = payload.cookiebotSites;
   if (Array.isArray(payload.cookiebotReports)) out.cookiebotReports = payload.cookiebotReports;
+  if (Array.isArray(payload.incidents)) out.incidents = payload.incidents;
 
   return out;
 }
@@ -304,6 +305,84 @@ export async function deleteCookiebotReport({ adminToken, site, fileName, upload
     fileName: String(fileName || "").trim(),
     uploaded: String(uploaded || "").trim(),
   });
+}
+
+/* ------------------ Operations timeline (Incidents tab) ------------------ */
+
+/** Only the 12 sheet columns travel to the backend — nothing derived. */
+function incidentPayload(entry) {
+  return {
+    id: String(entry.id || "").trim(),
+    date: String(entry.date || "").trim(),
+    domain: String(entry.domain || "").trim(),
+    title: String(entry.title || "").trim(),
+    type: String(entry.type || "").trim(),
+    severity: String(entry.severity || "").trim(),
+    duration: String(entry.duration || "").trim(),
+    customerImpact: String(entry.customerImpact || "").trim(),
+    revenueImpact: String(entry.revenueImpact || "").trim(),
+    status: String(entry.status || "").trim(),
+    notes: String(entry.notes || "").trim(),
+    links: String(entry.links || "").trim(),
+  };
+}
+
+export async function addIncident({ adminToken, ...entry }) {
+  return postToSheetsApi({ action: "addIncident", adminToken, ...incidentPayload(entry) });
+}
+
+export async function updateIncident({ adminToken, ...entry }) {
+  return postToSheetsApi({ action: "updateIncident", adminToken, ...incidentPayload(entry) });
+}
+
+export async function deleteIncident({ adminToken, id }) {
+  return postToSheetsApi({
+    action: "deleteIncident",
+    adminToken,
+    id: String(id || "").trim(),
+  });
+}
+
+export function validateIncidentForm(fields, options = {}) {
+  const {
+    validTypes = [],
+    validSeverities = [],
+    validStatuses = [],
+    parseDuration = null,
+  } = options;
+  const errors = {};
+
+  const date = String(fields.date || "").trim();
+  const title = String(fields.title || "").trim();
+  const domain = String(fields.domain || "").trim();
+  const duration = String(fields.duration || "").trim();
+
+  if (!date) errors.date = "Date is required.";
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) errors.date = "Date must be YYYY-MM-DD.";
+
+  if (fields.time && !/^\d{2}:\d{2}$/.test(String(fields.time).trim())) {
+    errors.time = "Time must be HH:MM (24h).";
+  }
+
+  if (!domain) errors.domain = "Domain is required.";
+  if (!title) errors.title = "Title is required.";
+
+  const check = (value, list, key, name) => {
+    const v = String(value || "").trim();
+    if (!v) errors[key] = `${name} is required.`;
+    else if (list.length && !list.includes(v)) errors[key] = `${name} must be one of: ${list.join(", ")}.`;
+  };
+  check(fields.type, validTypes, "type", "Type");
+  check(fields.severity, validSeverities, "severity", "Severity");
+  check(fields.status, validStatuses, "status", "Status");
+
+  // Duration stays optional (blank = ongoing, or a point-in-time event), but a
+  // value that can't be read would silently render a zero-length bar.
+  if (duration && parseDuration && parseDuration(duration) === null) {
+    errors.duration = 'Try "2h 30m", "33h", "45m" or "1d 4h".';
+  }
+
+  return { errors, valid: Object.keys(errors).length === 0 };
 }
 
 export async function updateInitiativeStatus({ adminToken, team, id, status }) {
