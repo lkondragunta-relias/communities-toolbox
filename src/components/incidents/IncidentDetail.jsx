@@ -73,6 +73,9 @@ export default function IncidentDetail({ entry, canEdit, onEdit, onDelete, onClo
               <Field label="When">{formatEventRange(entry)}</Field>
               <Field label="Duration">
                 {entry.ongoing ? "Ongoing" : formatDuration(entry.durationMinutes)}
+                {entry.durationFromRange ? (
+                  <span className="detail__note"> from start/end</span>
+                ) : null}
               </Field>
               <Field label="Customer impact">{entry.customerImpact || "—"}</Field>
               <Field label="Revenue impact">{formatRevenue(entry.revenue)}</Field>

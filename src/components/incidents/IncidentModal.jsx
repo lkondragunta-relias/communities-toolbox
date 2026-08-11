@@ -15,8 +15,10 @@ const REVENUE_PRESETS = ["$", "$$", "$$$", "$$$$"];
 
 const EMPTY_FORM = {
   id: "",
-  date: "",
-  time: "",
+  startDate: "",
+  startTime: "",
+  endDate: "",
+  endTime: "",
   domain: "",
   title: "",
   type: "Outage",
@@ -57,7 +59,7 @@ export default function IncidentModal({
   const [tokenInput, setTokenInput] = useState("");
   const [form, setForm] = useState(() => ({
     ...EMPTY_FORM,
-    date: todayISO(),
+    startDate: todayISO(),
     ...(initialValues || {}),
   }));
   const [errors, setErrors] = useState({});
@@ -104,19 +106,23 @@ export default function IncidentModal({
         return;
       }
 
-      // "Still ongoing" is stored as a blank duration on an open status — the
-      // dashboard grows the bar to the current time from there.
+      // "Still ongoing" is stored with no end and no duration on an open status —
+      // the dashboard grows the bar to the current time from there.
       const ongoing = Boolean(form.ongoing);
       const status = ongoing && form.status === "Resolved" ? "Active" : form.status;
+      const stamp = (date, time) => (date ? (time ? `${date} ${time}` : date) : "");
 
       onSave?.({
         id: form.id,
-        date: form.time ? `${form.date} ${form.time}` : form.date,
+        start: stamp(form.startDate, form.startTime),
+        end: ongoing ? "" : stamp(form.endDate, form.endTime),
         domain: form.domain.trim(),
         title: form.title.trim(),
         type: form.type,
         severity: form.severity,
-        duration: ongoing ? "" : form.duration.trim(),
+        // With an end timestamp the duration is derived, so the column is left
+        // blank rather than storing a value that could drift out of agreement.
+        duration: ongoing || form.endDate ? "" : form.duration.trim(),
         customerImpact: form.customerImpact.trim(),
         revenueImpact: form.revenueImpact.trim(),
         status,
@@ -185,39 +191,76 @@ export default function IncidentModal({
         ) : (
           <form className="admin-modal__form" onSubmit={handleSubmit}>
             <div className="admin-modal__scroll theme-scroll">
-              <div className="admin-field-row">
-                <label className="admin-field">
+              <div className="ops-when">
+                <label className="admin-field ops-when__field">
                   <span className="admin-field__label">
-                    Date <span className="admin-field__req">*</span>
+                    Started <span className="admin-field__req">*</span>
                   </span>
-                  <input
-                    type="date"
-                    className="admin-field__input"
-                    value={form.date}
-                    onChange={(e) => update("date", e.target.value)}
-                    required
-                  />
-                  {error("date")}
-                </label>
-
-                <label className="admin-field">
-                  <span className="admin-field__label">Start time (optional)</span>
                   <div className="ops-field-inline">
                     <input
-                      type="time"
+                      type="date"
                       className="admin-field__input"
-                      value={form.time}
-                      onChange={(e) => update("time", e.target.value)}
+                      value={form.startDate}
+                      onChange={(e) => update("startDate", e.target.value)}
+                      required
+                    />
+                    <input
+                      type="time"
+                      className="admin-field__input ops-field-time"
+                      aria-label="Start time"
+                      value={form.startTime}
+                      onChange={(e) => update("startTime", e.target.value)}
                     />
                     <button
                       type="button"
                       className="ops-chip"
-                      onClick={() => setForm((p) => ({ ...p, date: todayISO(), time: nowTime() }))}
+                      title="Set to right now"
+                      onClick={() =>
+                        setForm((p) => ({ ...p, startDate: todayISO(), startTime: nowTime() }))
+                      }
                     >
                       Now
                     </button>
                   </div>
-                  {error("time")}
+                  {error("startDate") || error("startTime")}
+                </label>
+
+                <label className="admin-field ops-when__field">
+                  <span className="admin-field__label">Ended</span>
+                  <div className="ops-field-inline">
+                    <input
+                      type="date"
+                      className="admin-field__input"
+                      value={form.endDate}
+                      onChange={(e) => update("endDate", e.target.value)}
+                      disabled={form.ongoing}
+                    />
+                    <input
+                      type="time"
+                      className="admin-field__input ops-field-time"
+                      aria-label="End time"
+                      value={form.endTime}
+                      onChange={(e) => update("endTime", e.target.value)}
+                      disabled={form.ongoing}
+                    />
+                    <button
+                      type="button"
+                      className="ops-chip"
+                      title="Set to right now"
+                      disabled={form.ongoing}
+                      onClick={() =>
+                        setForm((p) => ({ ...p, endDate: todayISO(), endTime: nowTime() }))
+                      }
+                    >
+                      Now
+                    </button>
+                  </div>
+                  <span className="admin-field__hint-inline">
+                    {form.endDate
+                      ? "Duration is calculated from these two times."
+                      : "Leave blank and set a duration instead, or mark it ongoing."}
+                  </span>
+                  {error("endDate") || error("endTime")}
                 </label>
               </div>
 
@@ -295,7 +338,7 @@ export default function IncidentModal({
                 </label>
               </div>
 
-              <div className="admin-field">
+              <div className="admin-field" hidden={Boolean(form.endDate)}>
                 <span className="admin-field__label">Duration</span>
                 <div className="ops-field-inline">
                   <input
@@ -304,7 +347,7 @@ export default function IncidentModal({
                     value={form.duration}
                     onChange={(e) => update("duration", e.target.value)}
                     placeholder="2h 30m"
-                    disabled={form.ongoing}
+                    disabled={form.ongoing || Boolean(form.endDate)}
                   />
                   <label className="ops-check">
                     <input
@@ -315,7 +358,7 @@ export default function IncidentModal({
                     <span>Still ongoing</span>
                   </label>
                 </div>
-                {!form.ongoing ? (
+                {!form.ongoing && !form.endDate ? (
                   <div className="ops-chip-row">
                     {DURATION_PRESETS.map((preset) => (
                       <button

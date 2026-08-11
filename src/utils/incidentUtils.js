@@ -219,32 +219,56 @@ export function domainKeyOf(value) {
  * `nowMs` is passed in so a whole render pass shares one clock.
  */
 export function normalizeIncident(raw, index, { domainNames = {}, nowMs = Date.now() } = {}) {
-  const start = parseIncidentDate(raw.date);
+  // `Start` is authoritative; `Date` is the original single-column form and is
+  // still accepted so existing sheet rows keep working untouched.
+  const rawStart = raw.start ?? raw.date ?? "";
+  const rawEnd = raw.end ?? "";
+  const start = parseIncidentDate(rawStart);
+  const end = parseIncidentDate(rawEnd);
   const type = resolveIncidentType(raw.type);
   const severity = resolveIncidentSeverity(raw.severity);
   const status = resolveIncidentStatus(raw.status);
-  const durationMinutes = parseDurationMinutes(raw.duration);
+  const explicitDuration = parseDurationMinutes(raw.duration);
 
   const rawDomain = String(raw.domain || "").trim();
   const key = domainKeyOf(rawDomain) || "unassigned";
   const domainLabel = rawDomain || "Unassigned";
 
   const startMs = start ? start.getTime() : null;
-  // Blank duration on a still-open event means "running right now": the bar
-  // grows to the current time instead of collapsing to a dot.
+  // An end before its start is bad data, not a negative event — ignore it and
+  // fall back to the Duration column.
+  const endValid = end && startMs !== null && end.getTime() >= startMs;
+  const endMsGiven = endValid ? end.getTime() : null;
+  const invertedRange = Boolean(end && startMs !== null && end.getTime() < startMs);
+
+  // Start + End wins over Duration: two timestamps are unambiguous, and it is
+  // what people actually know after an outage.
+  const durationMinutes =
+    endMsGiven !== null
+      ? Math.round((endMsGiven - startMs) / MINUTE_MS)
+      : explicitDuration;
+
+  // No end and no duration on a still-open event means "running right now": the
+  // bar grows to the current time instead of collapsing to a dot.
   const ongoing = durationMinutes === null && status.open;
-  const elapsed = ongoing && startMs ? Math.max(0, nowMs - startMs) : 0;
+  const elapsed = ongoing && startMs !== null ? Math.max(0, nowMs - startMs) : 0;
   const spanMs = durationMinutes !== null ? durationMinutes * MINUTE_MS : elapsed;
 
   return {
     id: String(raw.id || "").trim() || `row-${index + 1}`,
     title: String(raw.title || "").trim() || "(untitled event)",
-    rawDate: raw.date ?? "",
-    hasTime: dateValueHasTime(raw.date),
+    rawStart,
+    rawEnd,
+    rawDate: rawStart,
+    hasTime: dateValueHasTime(rawStart),
+    hasEndTime: dateValueHasTime(rawEnd),
     start,
+    end: endMsGiven === null ? null : end,
     startMs,
     endMs: startMs === null ? null : startMs + spanMs,
     durationMinutes,
+    durationFromRange: endMsGiven !== null,
+    invertedRange,
     effectiveMinutes: durationMinutes !== null ? durationMinutes : Math.round(elapsed / MINUTE_MS),
     ongoing,
     domain: rawDomain,
@@ -633,7 +657,7 @@ export function formatEventRange(entry) {
   const endLabel = sameDay
     ? end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })
     : end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) +
-      (entry.hasTime
+      (entry.hasEndTime || entry.hasTime
         ? `, ${end.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`
         : "");
   return `${start} → ${endLabel}`;
@@ -656,7 +680,8 @@ export function formatRevenue(revenue) {
 
 const CSV_HEADERS = [
   "ID",
-  "Date",
+  "Start",
+  "End",
   "Domain",
   "Title",
   "Type",
@@ -681,7 +706,8 @@ export function incidentsToCsv(entries) {
     lines.push(
       [
         e.id,
-        e.rawDate,
+        e.rawStart,
+        e.rawEnd,
         e.domain,
         e.title,
         e.type.label,

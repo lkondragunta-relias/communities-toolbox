@@ -14,7 +14,7 @@
  *   Domains    : Title(=id) | Name
  *   Statuses   : Title(=label) | Color | SortOrder
  *   Priorities : Title(=label) | Color | SortOrder
- *   Incidents  : ID | Date | Domain | Title | Type | Severity | Duration |
+ *   Incidents  : ID | Key | Start | End | Domain | Title | Type | Severity | Duration |
  *                Customer Impact | Revenue Impact | Status | Notes | Links
  *
  * The browser app reads GET (returns the flat JSON below) and writes via POST
@@ -76,6 +76,8 @@ function doPostLocked_(e) {
     if (action === 'addincident') return jsonResponse(addIncident_(body));
     if (action === 'updateincident') return jsonResponse(updateIncident_(body));
     if (action === 'deleteincident') return jsonResponse(deleteIncident_(body));
+    if (action === 'resolveincident') return jsonResponse(resolveIncident_(body));
+    if (action === 'listopenincidents') return jsonResponse(listOpenIncidents_());
 
     if (action === 'addcookiebotsite') return jsonResponse(addCookiebotSite_(body));
     if (action === 'deletecookiebotsite') return jsonResponse(deleteCookiebotSite_(body));
@@ -617,6 +619,7 @@ function deletePriority_(body) {
  */
 
 var INCIDENT_SHEET_NAME = 'Incidents';
+var INCIDENT_DATE_RE = /^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/;
 
 /**
  * The canonical column list. `header` is what gets created; `aliases` are the
@@ -625,7 +628,11 @@ var INCIDENT_SHEET_NAME = 'Incidents';
  */
 var INCIDENT_COLUMN_DEFS = [
   { key: 'id', header: 'ID', aliases: ['id', 'event id', 'incident id'], width: 90 },
-  { key: 'date', header: 'Date', aliases: ['date', 'date time', 'date / time', 'start', 'start date'], width: 140 },
+  { key: 'key', header: 'Key', aliases: ['key', 'external id', 'externalid', 'correlation id', 'dedupe key', 'alert id', 'source id'], width: 150 },
+  // 'date' stays an alias so a sheet created before Start/End existed keeps
+  // working: its Date column is read as the start and never duplicated.
+  { key: 'start', header: 'Start', aliases: ['start', 'start date', 'start time', 'started', 'date', 'date time', 'date / time'], width: 140 },
+  { key: 'end', header: 'End', aliases: ['end', 'end date', 'end time', 'ended', 'resolved', 'resolved at'], width: 140 },
   { key: 'domain', header: 'Domain', aliases: ['domain', 'system', 'site', 'property'], width: 150 },
   { key: 'title', header: 'Title', aliases: ['title', 'event', 'name', 'summary'], width: 220 },
   { key: 'type', header: 'Type', aliases: ['type', 'event type'], width: 160 },
@@ -794,12 +801,17 @@ function readIncidents_() {
   var out = [];
   for (var r = 0; r < values.length; r++) {
     var row = values[r];
-    var date = formatIncidentDateCell_(cell_(row, c.date));
+    var start = formatIncidentDateCell_(cell_(row, c.start));
+    var end = formatIncidentDateCell_(cell_(row, c.end));
     var title = String(cell_(row, c.title) || '').trim();
-    if (!date && !title) continue;
+    if (!start && !title) continue;
     out.push({
       id: String(cell_(row, c.id) || '').trim() || ('ROW-' + (r + 2)),
-      date: date,
+      key: String(cell_(row, c.key) || '').trim(),
+      start: start,
+      end: end,
+      date: start, // legacy field name, kept so older clients keep working
+
       domain: String(cell_(row, c.domain) || '').trim(),
       title: title,
       type: String(cell_(row, c.type) || '').trim(),
@@ -818,7 +830,9 @@ function readIncidents_() {
 function incidentValues_(body) {
   return {
     id: String(body.id || '').trim(),
-    date: String(body.date || '').trim(),
+    key: String(body.key || body.externalId || '').trim(),
+    start: String(body.start || body.date || '').trim(),
+    end: String(body.end || '').trim(),
     domain: String(body.domain || '').trim(),
     title: String(body.title || '').trim(),
     type: String(body.type || '').trim(),
@@ -834,9 +848,11 @@ function incidentValues_(body) {
 
 function writeIncidentRow_(row, c, v) {
   setCol_(row, c.id, v.id);
+  setCol_(row, c.key, v.key);
   // Leading apostrophe keeps Sheets from reformatting the timestamp into its
   // own locale — the app parses "yyyy-MM-dd HH:mm" back out verbatim.
-  setCol_(row, c.date, v.date ? "'" + v.date : '');
+  setCol_(row, c.start, v.start ? "'" + v.start : '');
+  setCol_(row, c.end, v.end ? "'" + v.end : '');
   setCol_(row, c.domain, v.domain);
   setCol_(row, c.title, v.title);
   setCol_(row, c.type, v.type);
@@ -865,12 +881,139 @@ function nextIncidentId_(sheet, idCol) {
 }
 
 function validateIncidentFields_(v) {
-  if (!v.date) throw new Error('Date is required.');
-  if (!/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?$/.test(v.date)) {
-    throw new Error('Date must be YYYY-MM-DD or YYYY-MM-DD HH:MM.');
+  if (!v.start) throw new Error('Start is required.');
+  if (!INCIDENT_DATE_RE.test(v.start)) {
+    throw new Error('Start must be YYYY-MM-DD or YYYY-MM-DD HH:MM.');
+  }
+  if (v.end) {
+    if (!INCIDENT_DATE_RE.test(v.end)) {
+      throw new Error('End must be YYYY-MM-DD or YYYY-MM-DD HH:MM.');
+    }
+    // Same format both sides, so a string compare is a safe chronology check.
+    if (v.end < v.start) throw new Error('End must be on or after Start.');
   }
   if (!v.domain) throw new Error('Domain is required.');
   if (!v.title) throw new Error('Title is required.');
+}
+
+var OPEN_STATUSES = ['active', 'monitoring', 'investigating', 'open'];
+
+function isOpenStatus_(value) {
+  return OPEN_STATUSES.indexOf(String(value || '').trim().toLowerCase()) >= 0;
+}
+
+/**
+ * Find the row an automated poster means, without it having to remember an ID.
+ * Preference order, most explicit first:
+ *   1. exact ID
+ *   2. Key, still-open row  (the normal "close the thing I opened" case)
+ *   3. Key, any row
+ *   4. Domain + Title, still-open row (last resort for posters with no key)
+ * Returns -1 when nothing matches.
+ */
+function findIncidentRow_(sheet, c, opts) {
+  var id = String(opts.id || '').trim().toLowerCase();
+  var key = String(opts.key || '').trim().toLowerCase();
+  var domain = String(opts.domain || '').trim().toLowerCase();
+  var title = String(opts.title || '').trim().toLowerCase();
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return -1;
+  var values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+
+  var keyOpen = -1, keyAny = -1, pairOpen = -1;
+  for (var i = 0; i < values.length; i++) {
+    var row = values[i];
+    var rowIndex = i + 2;
+    if (id && String(cell_(row, c.id) || '').trim().toLowerCase() === id) return rowIndex;
+
+    var open = isOpenStatus_(cell_(row, c.status));
+    if (key && String(cell_(row, c.key) || '').trim().toLowerCase() === key) {
+      if (open && keyOpen < 0) keyOpen = rowIndex;
+      if (keyAny < 0) keyAny = rowIndex;
+    }
+    if (!key && domain && title && open &&
+        String(cell_(row, c.domain) || '').trim().toLowerCase() === domain &&
+        String(cell_(row, c.title) || '').trim().toLowerCase() === title) {
+      if (pairOpen < 0) pairOpen = rowIndex;
+    }
+  }
+  if (keyOpen >= 0) return keyOpen;
+  if (keyAny >= 0) return keyAny;
+  return pairOpen;
+}
+
+function rowToIncident_(sheet, c, rowIndex) {
+  var row = sheet.getRange(rowIndex, 1, 1, sheet.getLastColumn()).getValues()[0];
+  return {
+    id: String(cell_(row, c.id) || '').trim(),
+    key: String(cell_(row, c.key) || '').trim(),
+    start: formatIncidentDateCell_(cell_(row, c.start)),
+    end: formatIncidentDateCell_(cell_(row, c.end)),
+    domain: String(cell_(row, c.domain) || '').trim(),
+    title: String(cell_(row, c.title) || '').trim(),
+    status: String(cell_(row, c.status) || '').trim(),
+  };
+}
+
+/** "yyyy-MM-dd HH:mm" for right now, in the script's timezone. */
+function nowStamp_() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+}
+
+/**
+ * Close an incident that is already logged. Accepts `id`, or `key`, or
+ * domain+title — so a poster that has forgotten everything except what it is
+ * monitoring can still resolve the right row. `end` defaults to now.
+ */
+function resolveIncident_(body) {
+  var sheet = ensureIncidentSheet_();
+  var c = incidentColumns_(sheet);
+  var rowIndex = findIncidentRow_(sheet, c, {
+    id: body.id,
+    key: body.key || body.externalId,
+    domain: body.domain,
+    title: body.title,
+  });
+  if (rowIndex < 0) {
+    throw new Error('No matching event to resolve. Pass id, key, or domain + title.');
+  }
+
+  var existing = rowToIncident_(sheet, c, rowIndex);
+  var end = String(body.end || '').trim() || nowStamp_();
+  if (!INCIDENT_DATE_RE.test(end)) {
+    throw new Error('End must be YYYY-MM-DD or YYYY-MM-DD HH:MM.');
+  }
+  if (existing.start && end < existing.start) {
+    throw new Error('End must be on or after Start (' + existing.start + ').');
+  }
+
+  var lastCol = sheet.getLastColumn();
+  var row = sheet.getRange(rowIndex, 1, 1, lastCol).getValues()[0];
+  setCol_(row, c.end, "'" + end);
+  setCol_(row, c.status, String(body.status || 'Resolved').trim());
+  // Only overwrite the optional fields the caller actually sent.
+  ['severity', 'customerImpact', 'revenueImpact', 'notes', 'links'].forEach(function (field) {
+    var value = body[field];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      setCol_(row, c[field], String(value).trim());
+    }
+  });
+  // The range now defines the length, so a stale duration must not linger.
+  setCol_(row, c.duration, '');
+  sheet.getRange(rowIndex, 1, 1, lastCol).setValues([row]);
+
+  return { ok: true, id: existing.id, key: existing.key, end: end, resolved: true };
+}
+
+/** Open events, so a poster can ask "what have I already logged?" */
+function listOpenIncidents_() {
+  var all = readIncidents_();
+  var out = [];
+  for (var i = 0; i < all.length; i++) {
+    if (isOpenStatus_(all[i].status)) out.push(all[i]);
+  }
+  return { ok: true, incidents: out };
 }
 
 function addIncident_(body) {
@@ -878,6 +1021,23 @@ function addIncident_(body) {
   var c = incidentColumns_(sheet);
   var v = incidentValues_(body);
   validateIncidentFields_(v);
+
+  // A repeated alert for something already open is the same incident. Update
+  // it in place so a flapping monitor cannot create ten rows for one outage.
+  if (v.key) {
+    var existingRow = findIncidentRow_(sheet, c, { key: v.key });
+    if (existingRow >= 0) {
+      var current = rowToIncident_(sheet, c, existingRow);
+      var lastColU = sheet.getLastColumn();
+      var updated = sheet.getRange(existingRow, 1, 1, lastColU).getValues()[0];
+      v.id = current.id;
+      // Keep the original start: an outage began when it began.
+      v.start = current.start || v.start;
+      writeIncidentRow_(updated, c, v);
+      sheet.getRange(existingRow, 1, 1, lastColU).setValues([updated]);
+      return { ok: true, id: v.id, key: v.key, updated: true, created: false };
+    }
+  }
 
   if (!v.id) v.id = nextIncidentId_(sheet, c.id);
   if (findRowByValue_(sheet, c.id, v.id) >= 0) {
@@ -888,18 +1048,19 @@ function addIncident_(body) {
   var row = buildEmptyRow_(sheet);
   writeIncidentRow_(row, c, v);
   sheet.appendRow(row);
-  return { ok: true, id: v.id };
+  return { ok: true, id: v.id, key: v.key, updated: false, created: true };
 }
 
 function updateIncident_(body) {
   var sheet = ensureIncidentSheet_();
   var c = incidentColumns_(sheet);
   var v = incidentValues_(body);
-  if (!v.id) throw new Error('Event ID is required.');
+  if (!v.id && !v.key) throw new Error('Event ID or Key is required.');
   validateIncidentFields_(v);
 
-  var rowIndex = findRowByValue_(sheet, c.id, v.id);
-  if (rowIndex < 0) throw new Error('Event not found: ' + v.id);
+  var rowIndex = findIncidentRow_(sheet, c, { id: v.id, key: v.key });
+  if (rowIndex < 0) throw new Error('Event not found: ' + (v.id || v.key));
+  if (!v.id) v.id = rowToIncident_(sheet, c, rowIndex).id;
 
   var lastCol = sheet.getLastColumn();
   var row = sheet.getRange(rowIndex, 1, 1, lastCol).getValues()[0];

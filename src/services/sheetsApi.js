@@ -313,7 +313,9 @@ export async function deleteCookiebotReport({ adminToken, site, fileName, upload
 function incidentPayload(entry) {
   return {
     id: String(entry.id || "").trim(),
-    date: String(entry.date || "").trim(),
+    key: String(entry.key || entry.externalId || "").trim(),
+    start: String(entry.start || entry.date || "").trim(),
+    end: String(entry.end || "").trim(),
     domain: String(entry.domain || "").trim(),
     title: String(entry.title || "").trim(),
     type: String(entry.type || "").trim(),
@@ -335,6 +337,29 @@ export async function updateIncident({ adminToken, ...entry }) {
   return postToSheetsApi({ action: "updateIncident", adminToken, ...incidentPayload(entry) });
 }
 
+/**
+ * Close an already-logged incident. Identify it by `id`, by `key` (the caller's
+ * own correlation id), or by domain + title — so an automated poster that keeps
+ * no state can still close the row it opened. `end` defaults to now.
+ */
+export async function resolveIncident({ adminToken, id, key, domain, title, end, ...rest }) {
+  return postToSheetsApi({
+    action: "resolveIncident",
+    adminToken,
+    id: String(id || "").trim(),
+    key: String(key || "").trim(),
+    domain: String(domain || "").trim(),
+    title: String(title || "").trim(),
+    end: String(end || "").trim(),
+    ...rest,
+  });
+}
+
+/** Everything still Active / Monitoring — "what have I already logged?" */
+export async function listOpenIncidents({ adminToken }) {
+  return postToSheetsApi({ action: "listOpenIncidents", adminToken });
+}
+
 export async function deleteIncident({ adminToken, id }) {
   return postToSheetsApi({
     action: "deleteIncident",
@@ -352,16 +377,32 @@ export function validateIncidentForm(fields, options = {}) {
   } = options;
   const errors = {};
 
-  const date = String(fields.date || "").trim();
+  const startDate = String(fields.startDate || fields.date || "").trim();
+  const startTime = String(fields.startTime || fields.time || "").trim();
+  const endDate = String(fields.endDate || "").trim();
+  const endTime = String(fields.endTime || "").trim();
   const title = String(fields.title || "").trim();
   const domain = String(fields.domain || "").trim();
   const duration = String(fields.duration || "").trim();
 
-  if (!date) errors.date = "Date is required.";
-  else if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) errors.date = "Date must be YYYY-MM-DD.";
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const TIME_RE = /^\d{2}:\d{2}$/;
 
-  if (fields.time && !/^\d{2}:\d{2}$/.test(String(fields.time).trim())) {
-    errors.time = "Time must be HH:MM (24h).";
+  if (!startDate) errors.startDate = "Start date is required.";
+  else if (!DATE_RE.test(startDate)) errors.startDate = "Use YYYY-MM-DD.";
+  if (startTime && !TIME_RE.test(startTime)) errors.startTime = "Use HH:MM (24h).";
+
+  if (endDate && !DATE_RE.test(endDate)) errors.endDate = "Use YYYY-MM-DD.";
+  if (endTime && !TIME_RE.test(endTime)) errors.endTime = "Use HH:MM (24h).";
+  // A time with no date has nothing to anchor it to.
+  if (endTime && !endDate) errors.endDate = "Add an end date for that time.";
+
+  // Chronology, only once both sides are well-formed. Times default to 00:00
+  // so a same-day range without times is treated as valid, not inverted.
+  if (!errors.startDate && !errors.endDate && !errors.startTime && !errors.endTime && endDate) {
+    const from = `${startDate} ${startTime || "00:00"}`;
+    const to = `${endDate} ${endTime || "00:00"}`;
+    if (to < from) errors.endDate = "End must be on or after the start.";
   }
 
   if (!domain) errors.domain = "Domain is required.";

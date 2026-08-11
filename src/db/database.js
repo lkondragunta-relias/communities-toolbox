@@ -56,6 +56,21 @@ db.version(4)
     await tx.table("incidents").bulkAdd(SEED_INCIDENTS.map((i) => ({ ...i })));
   });
 
+// v5 renames the incident `date` column to `start` and adds `end`.
+db.version(5)
+  .stores({ incidents: "id, start, domain" })
+  .upgrade(async (tx) => {
+    const rows = await tx.table("incidents").toArray();
+    await Promise.all(
+      rows.map((row) => {
+        if (row.start) return null;
+        const next = { ...row, start: row.date || "", end: row.end || "" };
+        delete next.date;
+        return tx.table("incidents").put(next);
+      })
+    );
+  });
+
 function projectKey(domain, id) {
   return `${String(domain).toLowerCase()}::${String(id)}`;
 }
@@ -102,59 +117,59 @@ const SEED_PRIORITIES = DEFAULT_PRIORITIES.map((p, i) => ({ ...p, order: i }));
 /** Sample operations events so the timeline has something to show locally. */
 const SEED_INCIDENTS = [
   {
-    id: "INC-0001", date: "2026-06-08 07:10", domain: "FreeCME", title: "SSO Failure",
+    id: "INC-0001", start: "2026-06-08 07:10", end: "2026-06-08 09:10", domain: "FreeCME", title: "SSO Failure",
     type: "Outage", severity: "High", duration: "2h", customerImpact: "Users unable to log in",
     revenueImpact: "$", status: "Resolved", notes: "Akamai security configuration blocked the IdP callback.",
     links: "Slack",
   },
   {
-    id: "INC-0002", date: "2026-06-25 14:30", domain: "Relias Academy", title: "Session Expiry",
+    id: "INC-0002", start: "2026-06-25 14:30", end: "2026-06-26 23:30", domain: "Relias Academy", title: "Session Expiry",
     type: "Outage", severity: "Critical", duration: "33h", customerImpact: "Login & Checkout",
     revenueImpact: "$48,000", status: "Resolved",
     notes: "Internal security scan during the Akamai migration. One whitelisted IP generated high-volume traffic.",
     links: "Incident Report / Slack",
   },
   {
-    id: "INC-0003", date: "2026-06-29 09:00", domain: "Nurse", title: "Stripe Webhook Failure",
+    id: "INC-0003", start: "2026-06-29 09:00", end: "2026-06-29 13:00", domain: "Nurse", title: "Stripe Webhook Failure",
     type: "Integration", severity: "High", duration: "4h", customerImpact: "Subscription payments failed",
     revenueImpact: "$12,400", status: "Resolved", notes: "Missing Stripe headers after the Akamai migration.",
     links: "Ticket",
   },
   {
-    id: "INC-0004", date: "2026-07-02 11:00", domain: "WCEI", title: "Events Missing",
+    id: "INC-0004", start: "2026-07-02 11:00", end: "2026-07-02 13:00", domain: "WCEI", title: "Events Missing",
     type: "Outage", severity: "High", duration: "2h", customerImpact: "Live classes unavailable",
     revenueImpact: "$6,250", status: "Resolved", notes: "GET requests rejected by Akamai.",
     links: "Jira",
   },
   {
-    id: "INC-0005", date: "2026-07-14 22:00", domain: "Relias Academy", title: "Akamai Migration — cutover",
+    id: "INC-0005", start: "2026-07-14 22:00", end: "2026-07-15 01:00", domain: "Relias Academy", title: "Akamai Migration — cutover",
     type: "Migration", severity: "Low", duration: "3h", customerImpact: "No customer impact",
     revenueImpact: "", status: "Resolved", notes: "Planned DNS cutover window.", links: "",
   },
   {
-    id: "INC-0006", date: "2026-07-21 09:30", domain: "Nurse", title: "Checkout Slowdown",
+    id: "INC-0006", start: "2026-07-21 09:30", end: "2026-07-21 10:15", domain: "Nurse", title: "Checkout Slowdown",
     type: "Degradation", severity: "Medium", duration: "45m", customerImpact: "Slow checkout for some users",
     revenueImpact: "$1,260", status: "Resolved", notes: "Origin latency spike during a catalog reindex.",
     links: "",
   },
   {
-    id: "INC-0007", date: "2026-08-01 21:00", domain: "Clinician", title: "Planned Maintenance",
+    id: "INC-0007", start: "2026-08-01 21:00", end: "2026-08-01 21:30", domain: "Clinician", title: "Planned Maintenance",
     type: "Maintenance", severity: "Low", duration: "30m", customerImpact: "Planned maintenance window",
     revenueImpact: "", status: "Resolved", notes: "", links: "",
   },
   {
-    id: "INC-0008", date: "2026-08-05 11:23", domain: "Relias Academy", title: "Rackspace Outage",
+    id: "INC-0008", start: "2026-08-05 11:23", end: "2026-08-05 22:00", domain: "Relias Academy", title: "Rackspace Outage",
     type: "Vendor Issue", severity: "Critical", duration: "10h 37m", customerImpact: "Site unavailable for users",
     revenueImpact: "$95,420", status: "Resolved", notes: "Upstream hosting provider incident.",
     links: "Incident Report",
   },
   {
-    id: "INC-0009", date: "2026-08-07 15:00", domain: "RLP", title: "Release: RLP 3.2.1",
+    id: "INC-0009", start: "2026-08-07 15:00", end: "", domain: "RLP", title: "Release: RLP 3.2.1",
     type: "Release", severity: "Low", duration: "15m", customerImpact: "No customer impact",
     revenueImpact: "", status: "Resolved", notes: "", links: "",
   },
   {
-    id: "INC-0010", date: "2026-08-10 08:15", domain: "Nurse", title: "Intermittent 502s",
+    id: "INC-0010", start: "2026-08-10 08:15", end: "", domain: "Nurse", title: "Intermittent 502s",
     type: "Degradation", severity: "Medium", duration: "", customerImpact: "Some users see errors on course pages",
     revenueImpact: "$$", status: "Monitoring", notes: "Watching origin error rate after the CDN rule change.",
     links: "",
@@ -307,7 +322,7 @@ async function updateStatus(payload) {
 }
 
 const INCIDENT_FIELDS = [
-  "date", "domain", "title", "type", "severity", "duration",
+  "key", "start", "end", "domain", "title", "type", "severity", "duration",
   "customerImpact", "revenueImpact", "status", "notes", "links",
 ];
 
@@ -322,7 +337,7 @@ function incidentRowFrom(payload, base = {}) {
 async function addIncidentRow(payload) {
   const row = incidentRowFrom(payload);
   if (!row.id) throw new Error("Event ID is required.");
-  if (!row.date) throw new Error("Date is required.");
+  if (!row.start) throw new Error("Start is required.");
   if (!row.title) throw new Error("Title is required.");
   if (await db.incidents.get(row.id)) throw new Error(`Event ID already exists: ${row.id}`);
   await db.incidents.add(row);
@@ -421,6 +436,25 @@ export async function postToLocal(payload) {
     );
     if (hit) await db.reports.delete(hit.id);
     return { ok: true };
+  }
+  if (action === "resolveincident") {
+    const rows = await db.incidents.toArray();
+    const key = String(payload.key || "").trim().toLowerCase();
+    const id = String(payload.id || "").trim().toLowerCase();
+    const open = (r) => ["active", "monitoring", "investigating", "open"]
+      .includes(String(r.status || "").trim().toLowerCase());
+    const hit =
+      rows.find((r) => id && String(r.id).toLowerCase() === id) ||
+      rows.find((r) => key && String(r.key || "").toLowerCase() === key && open(r)) ||
+      rows.find((r) => key && String(r.key || "").toLowerCase() === key);
+    if (!hit) throw new Error("No matching event to resolve.");
+    const pad = (n) => String(n).padStart(2, "0");
+    const d = new Date();
+    const end =
+      String(payload.end || "").trim() ||
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    await db.incidents.put({ ...hit, end, duration: "", status: payload.status || "Resolved" });
+    return { ok: true, id: hit.id, key: hit.key || "", end, resolved: true };
   }
   if (action === "addincident") return addIncidentRow(payload);
   if (action === "updateincident") return updateIncidentRow(payload);

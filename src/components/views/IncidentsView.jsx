@@ -311,21 +311,27 @@ export default function IncidentsView({
   );
 
   const openEdit = useCallback((entry) => {
-    // Rebuild the form's date/time from the parsed timestamp rather than the raw
-    // cell, so any accepted input format ("6/25/26", a real Date) edits cleanly.
+    // Rebuild the form fields from the parsed timestamps rather than the raw
+    // cells, so any accepted input format ("6/25/26", a real Date) edits cleanly.
     const pad = (n) => String(n).padStart(2, "0");
-    const d = entry.start;
+    const dateOf = (d) => (d ? `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` : "");
+    const timeOf = (d, has) => (d && has ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : "");
     setModal({
       mode: "edit",
       values: {
         id: entry.id,
-        date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
-        time: entry.hasTime ? `${pad(d.getHours())}:${pad(d.getMinutes())}` : "",
+        startDate: dateOf(entry.start),
+        startTime: timeOf(entry.start, entry.hasTime),
+        endDate: dateOf(entry.end),
+        endTime: timeOf(entry.end, entry.hasEndTime),
         domain: entry.domain,
         title: entry.title,
         type: entry.type.label,
         severity: entry.severity.label,
-        duration: entry.durationMinutes === null ? "" : formatDuration(entry.durationMinutes),
+        duration:
+          entry.durationFromRange || entry.durationMinutes === null
+            ? ""
+            : formatDuration(entry.durationMinutes),
         ongoing: entry.ongoing,
         customerImpact: entry.customerImpact,
         revenueImpact: entry.revenue.raw,
