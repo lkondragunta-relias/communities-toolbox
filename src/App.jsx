@@ -413,7 +413,11 @@ export default function App() {
 
           {data && !error ? (
             view === "overview" ? (
-              <OverviewView data={data} onSelectProject={handleSelectProject} />
+              <OverviewView
+                data={data}
+                onSelectProject={handleSelectProject}
+                onNavigate={navigate}
+              />
             ) : view === "incidents" ? (
               <IncidentsView
                 data={data}
