@@ -1,57 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect } from "react";
 
-export const THEME_STORAGE_KEY = "roadmap-theme-preference";
-
-export function getSystemTheme() {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
-
-export function resolveTheme(preference) {
-  if (preference === "light" || preference === "dark") return preference;
-  return getSystemTheme();
-}
-
-export function applyTheme(resolved) {
-  document.documentElement.dataset.theme = resolved;
-}
-
-function readStoredPreference() {
-  try {
-    const stored = localStorage.getItem(THEME_STORAGE_KEY);
-    if (stored === "light" || stored === "dark" || stored === "system") return stored;
-  } catch {
-    /* ignore */
-  }
-  return "system";
-}
+/**
+ * The toolbox ships light-only.
+ *
+ * There used to be a System / Light / Dark switcher; only light was ever
+ * properly designed, so the control was removed rather than left offering two
+ * broken choices. The dark token block stays in the stylesheet — it costs
+ * nothing and keeps the door open — but nothing selects it at runtime.
+ */
+export const THEME = "light";
 
 export function useTheme() {
-  const [preference, setPreference] = useState(readStoredPreference);
-  // Tracked in state (not just read once) so `resolved` stays correct when the
-  // OS theme changes while preference is "system".
-  const [systemTheme, setSystemTheme] = useState(getSystemTheme);
-  const resolved = preference === "system" ? systemTheme : preference;
-
   useEffect(() => {
-    applyTheme(resolved);
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, preference);
-    } catch {
-      /* ignore */
-    }
-  }, [preference, resolved]);
-
-  useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const sync = () => setSystemTheme(media.matches ? "dark" : "light");
-
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
+    document.documentElement.dataset.theme = THEME;
   }, []);
-
-  const setThemePreference = useCallback((next) => {
-    setPreference(next);
-  }, []);
-
-  return { preference, resolved, setThemePreference };
+  return { resolved: THEME };
 }

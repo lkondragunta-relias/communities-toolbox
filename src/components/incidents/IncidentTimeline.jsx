@@ -7,15 +7,32 @@ import {
   positionInWindow,
 } from "../../utils/incidentUtils";
 
-const LANE_HEIGHT = 26;
-const LANE_GAP = 6;
-const TRACK_PADDING = 10;
+const LANE_HEIGHT = 22;
+const LANE_GAP = 5;
+const TRACK_PADDING = 9;
 
 /** Narrowest a tick column may get before the timeline starts scrolling. */
 const MIN_TICK_PX = { month: 78, week: 62, day: 46 };
 
 function rowHeight(laneCount) {
   return TRACK_PADDING * 2 + laneCount * LANE_HEIGHT + Math.max(0, laneCount - 1) * LANE_GAP;
+}
+
+/** "3 events · 12h down" — the sub-label under each domain name. */
+function rowSummary(items) {
+  const count = `${items.length} event${items.length === 1 ? "" : "s"}`;
+  const down = items.reduce((sum, i) => sum + (i.isIncident ? i.effectiveMinutes || 0 : 0), 0);
+  return down > 0 ? `${count} · ${formatDuration(down)} down` : count;
+}
+
+/** Color of the highest-severity incident in a row (planned work never wins). */
+function worstColor(items) {
+  let worst = null;
+  items.forEach((item) => {
+    if (item.type.planned) return;
+    if (!worst || item.severity.rank > worst.severity.rank) worst = item;
+  });
+  return (worst || items[0])?.color || "#64748b";
 }
 
 function Tooltip({ hover }) {
@@ -102,7 +119,13 @@ export default function IncidentTimeline({
                 {ticks.map((tick) => (
                   <div
                     key={tick.key}
-                    className={`ops-timeline__tick${tick.weekend ? " is-weekend" : ""}`}
+                    className={[
+                      "ops-timeline__tick",
+                      tick.weekend && "is-weekend",
+                      tick.sub === "Sun" && "is-sunday",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
                   >
                     <span className="ops-timeline__tick-label">{tick.label}</span>
                     {tick.sub ? <span className="ops-timeline__tick-sub">{tick.sub}</span> : null}
@@ -120,15 +143,23 @@ export default function IncidentTimeline({
                   left: `calc(var(--ops-label-w) + (100% - var(--ops-label-w)) * ${nowPct / 100})`,
                 }}
               >
-                <span className="ops-timeline__now-label">Today</span>
+                <span className="ops-timeline__now-caret" />
               </div>
             ) : null}
 
             {rows.map((row) => (
               <div className="ops-row" key={row.key} style={{ height: `${rowHeight(row.laneCount)}px` }}>
-                <div className="ops-timeline__label-col ops-row__label" title={row.label}>
-                  <span className="ops-row__label-text">{row.label}</span>
-                  <span className="ops-row__label-count">{row.items.length}</span>
+                <div
+                  className="ops-timeline__label-col ops-row__label"
+                  title={row.label}
+                  // Accent = the worst thing that happened to this domain in view.
+                  style={{ "--row-accent": worstColor(row.items) }}
+                >
+                  <span className="ops-row__swatch" aria-hidden="true" />
+                  <span className="ops-row__label-body">
+                    <span className="ops-row__label-text">{row.label}</span>
+                    <span className="ops-row__label-sub">{rowSummary(row.items)}</span>
+                  </span>
                 </div>
                 <div className="ops-row__track">
                   <div className="ops-row__lines" style={{ gridTemplateColumns: columns }}>
@@ -148,8 +179,12 @@ export default function IncidentTimeline({
                     );
                     const clippedStart = entry.startMs < timeWindow.startMs;
                     const clippedEnd = (entry.endMs ?? entry.startMs) > timeWindow.endMs;
+                    // Only the worst events get a solid fill; everything else is
+                    // tinted, so a busy month reads as texture rather than noise.
+                    const solid = entry.severity.rank === 4 && !entry.type.planned;
                     const classes = [
                       "ops-bar",
+                      solid ? "ops-bar--solid" : "ops-bar--tint",
                       entry.type.planned && "ops-bar--planned",
                       entry.ongoing && "ops-bar--ongoing",
                       selectedId === entry.id && "is-selected",
@@ -169,8 +204,8 @@ export default function IncidentTimeline({
                           width: `${Math.max(right - left, 0)}%`,
                           top: `${TRACK_PADDING + entry.lane * (LANE_HEIGHT + LANE_GAP)}px`,
                           height: `${LANE_HEIGHT}px`,
-                          background: entry.color,
-                          color: contrastText(entry.color),
+                          "--bar-color": entry.color,
+                          "--bar-text": contrastText(entry.color),
                         }}
                         onMouseEnter={(e) => handleEnter(e, entry)}
                         onMouseLeave={handleLeave}

@@ -1,59 +1,22 @@
 import { ROADMAP_TITLE } from "../config/roadmapDefaults";
-import ThemeSwitcher from "./ThemeSwitcher";
-
-const ICONS = {
-  overview: (
-    <path d="M3 3h7v7H3V3zm11 0h7v4h-7V3zM3 14h7v7H3v-7zm11-3h7v10h-7V11z" />
-  ),
-  timeline: (
-    <path d="M3 5h12v3H3V5zm4 5h13v3H7v-3zM3 15h9v3H3v-3z" />
-  ),
-  table: (
-    <path d="M3 4h18v4H3V4zm0 6h18v4H3v-4zm0 6h18v4H3v-4z" />
-  ),
-  sites: (
-    <path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2c1.7 0 3.2 2.3 3.8 6H8.2C8.8 6.3 10.3 4 12 4zM4.3 9h3.4a22 22 0 000 6H4.3a8 8 0 010-6zm3.9 8h7.6c-.6 3-2 5-3.8 5s-3.2-2-3.8-5zm9.5-2a22 22 0 000-6h3.4a8 8 0 010 6h-3.4z" />
-  ),
-  settings: (
-    <path d="M12 8a4 4 0 100 8 4 4 0 000-8zm8.9 5.6.1-1.6-.1-1.6 1.7-1.3-1.7-3-2 .8a7 7 0 0 0-2.8-1.6L13.5 2h-3l-.3 2.3A7 7 0 0 0 7.4 6l-2-.8-1.7 3 1.7 1.3-.1 1.6.1 1.6-1.7 1.3 1.7 3 2-.8a7 7 0 0 0 2.8 1.6l.3 2.3h3l.3-2.3a7 7 0 0 0 2.8-1.6l2 .8 1.7-3-1.7-1.3z" />
-  ),
-  accessibility: (
-    <path d="M12 2a2 2 0 110 4 2 2 0 010-4zM3 8h18v2h-6v12h-2v-6h-2v6H9V10H3V8z" />
-  ),
-  incidents: (
-    <path d="M12 2 1 21h22L12 2zm0 5.5 7.1 12.3H4.9L12 7.5zM11 10h2v5h-2v-5zm0 6.5h2V19h-2v-2.5z" />
-  ),
-};
+import Icon from "./Icon";
 
 const NAV = [
-  { id: "overview", label: "Overview" },
-  { id: "timeline", label: "Roadmap" },
+  { id: "overview", label: "Overview", icon: "overview" },
+  { id: "timeline", label: "Roadmap", icon: "roadmap" },
   // { id: "table", label: "Projects" }, // hidden for now
-  { id: "incidents", label: "Operations" },
-  { id: "sites", label: "Cookiebot" },
+  { id: "incidents", label: "Operations", icon: "operations" },
+  { id: "sites", label: "Cookiebot", icon: "cookiebot" },
   {
     id: "accessibility",
     label: "Accessibility",
+    icon: "accessibility",
     href: "https://a11y-monitor-seven.vercel.app/dashboard",
   },
-  { id: "settings", label: "Settings" },
+  { id: "settings", label: "Settings", icon: "settings" },
 ];
 
-function NavIcon({ name }) {
-  return (
-    <svg className="sidebar__icon" viewBox="0 0 24 24" aria-hidden="true">
-      {ICONS[name]}
-    </svg>
-  );
-}
-
-export default function Sidebar({
-  view,
-  onNavigate,
-  collapsed = false,
-  themePreference,
-  onThemeChange,
-}) {
+export default function Sidebar({ view, onNavigate, collapsed = false, onToggleCollapse }) {
   return (
     <aside className={`sidebar${collapsed ? " sidebar--collapsed" : ""}`}>
       <div className="sidebar__brand">
@@ -72,8 +35,9 @@ export default function Sidebar({
               title={collapsed ? item.label : undefined}
               className="sidebar__link"
             >
-              <NavIcon name={item.id} />
+              <Icon name={item.icon} className="sidebar__icon" />
               <span className="sidebar__link-text">{item.label}</span>
+              <Icon name="external" className="sidebar__external" />
             </a>
           ) : (
             <button
@@ -84,20 +48,28 @@ export default function Sidebar({
               aria-current={view === item.id ? "page" : undefined}
               onClick={() => onNavigate(item.id)}
             >
-              <NavIcon name={item.id} />
+              <Icon name={item.icon} className="sidebar__icon" />
               <span className="sidebar__link-text">{item.label}</span>
             </button>
           )
         )}
       </nav>
 
-      <div className="sidebar__footer">
-        {onThemeChange ? (
-          <div className="sidebar__theme">
-            <ThemeSwitcher preference={themePreference} onChange={onThemeChange} />
-          </div>
-        ) : null}
-      </div>
+      {onToggleCollapse ? (
+        <div className="sidebar__footer">
+          <button
+            type="button"
+            className="sidebar__collapse"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={collapsed}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={onToggleCollapse}
+          >
+            <Icon name="panel" className="sidebar__icon" />
+            <span className="sidebar__link-text">Collapse</span>
+          </button>
+        </div>
+      ) : null}
     </aside>
   );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import IncidentTimeline from "../incidents/IncidentTimeline";
 import IncidentDetail from "../incidents/IncidentDetail";
 import IncidentModal from "../incidents/IncidentModal";
+import Icon from "../Icon";
 import {
   INCIDENT_SEVERITIES,
   INCIDENT_STATUSES,
@@ -20,6 +21,7 @@ import {
   computeIncidentStats,
   downloadCsv,
   filterIncidents,
+  formatDomainList,
   formatDuration,
   formatEventDate,
   formatMoney,
@@ -30,6 +32,7 @@ import {
   incidentsToCsv,
   isIncidentFilterActive,
   nextIncidentId,
+  overlapsWindow,
   windowStep,
 } from "../../utils/incidentUtils";
 
@@ -37,13 +40,55 @@ const RECENT_PAGE = 10;
 /** Lane packing treats anything under ~1% of the window as "same moment". */
 const MIN_SPAN_RATIO = 0.01;
 
+/** Page buttons with an ellipsis once there are more than a handful. */
+function pageNumbers(current, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages = new Set([1, total, current, current - 1, current + 1]);
+  const shown = [...pages].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b);
+  const out = [];
+  shown.forEach((n, i) => {
+    if (i > 0 && n - shown[i - 1] > 1) out.push("…");
+    out.push(n);
+  });
+  return out;
+}
+
 function StatCard({ label, value, hint, tone }) {
   return (
-    <div className={`ops-stat${tone ? ` ops-stat--${tone}` : ""}`}>
-      <span className="ops-stat__label">{label}</span>
+    <div className={`ops-stat ops-stat--${tone || "plain"}`}>
+      <div className="ops-stat__top">
+        <span className="ops-stat__dot" aria-hidden="true" />
+        <span className="ops-stat__label">{label}</span>
+      </div>
       <span className="ops-stat__value">{value}</span>
-      {hint ? <span className="ops-stat__hint">{hint}</span> : null}
+      <span className="ops-stat__hint">{hint}</span>
     </div>
+  );
+}
+
+/** "● 1 Critical  ● 2 High" — counts that carry their own severity color. */
+function SeverityCounts({ counts, empty }) {
+  const present = INCIDENT_SEVERITIES.filter((s) => counts[s.label] > 0);
+  if (present.length === 0) return empty;
+  return present.map((s) => (
+    <span key={s.id} className="ops-count" style={{ "--count-color": s.color }}>
+      <span className="ops-count__dot" aria-hidden="true" />
+      {counts[s.label]} {s.label}
+    </span>
+  ));
+}
+
+/** Bordered control with a leading icon and our own chevron, like the mock. */
+function Control({ label, icon, children, grow }) {
+  return (
+    <label className={`ops-field${grow ? " ops-field--grow" : ""}`}>
+      <span className="ops-field__label">{label}</span>
+      <span className="ops-control">
+        <Icon name={icon} className="ops-control__icon" />
+        {children}
+        <span className="ops-control__chevron" aria-hidden="true" />
+      </span>
+    </label>
   );
 }
 
@@ -88,6 +133,8 @@ export default function IncidentsView({
   onLock,
   applyRoadmap,
   refetch,
+  selectedId: routeSelectedId = null,
+  onSelectId = null,
 }) {
   // One clock per render pass, refreshed each minute so "ongoing" bars grow.
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -99,10 +146,16 @@ export default function IncidentsView({
   const [filters, setFilters] = useState(INITIAL_INCIDENT_FILTERS);
   const [zoom, setZoom] = useState("month");
   const [anchorMs, setAnchorMs] = useState(() => Date.now());
-  const [selectedId, setSelectedId] = useState(null);
   const [modal, setModal] = useState(null);
-  const [showAllRecent, setShowAllRecent] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(RECENT_PAGE);
   const [error, setError] = useState("");
+
+  // The open drawer is part of the URL when the app supplies a router
+  // (#/operations/INC-0002); standalone renders keep it in local state.
+  const [localSelectedId, setLocalSelectedId] = useState(null);
+  const selectedId = onSelectId ? routeSelectedId : localSelectedId;
+  const setSelectedId = onSelectId || setLocalSelectedId;
 
   const allEntries = useMemo(() => getIncidents(data, nowMs), [data, nowMs]);
   const scoped = useMemo(() => filterIncidents(allEntries, filters), [allEntries, filters]);
@@ -122,6 +175,13 @@ export default function IncidentsView({
       }),
     [scoped, timeWindow]
   );
+
+  // Totals for what the timeline is actually showing, which is a different
+  // question from the KPI cards (those follow the filters, not the window).
+  const windowStats = useMemo(() => {
+    const visible = scoped.filter((e) => overlapsWindow(e, timeWindow));
+    return computeIncidentStats(visible, allEntries);
+  }, [scoped, timeWindow, allEntries]);
 
   const domainOptions = useMemo(() => {
     const map = new Map();
@@ -145,15 +205,21 @@ export default function IncidentsView({
 
   const filterActive = isIncidentFilterActive(filters);
   const scopeLabel = filters.year === "all" ? "all time" : String(filters.year);
+  const zoomIndex = Math.max(0, ZOOM_LEVELS.findIndex((l) => l.id === zoom));
 
   /* --------------------------- filter handlers --------------------------- */
 
-  const setFilter = useCallback((patch) => setFilters((prev) => ({ ...prev, ...patch })), []);
+  // Every filter change also returns to the first page of results.
+  const setFilter = useCallback((patch) => {
+    setFilters((prev) => ({ ...prev, ...patch }));
+    setPage(1);
+  }, []);
 
   const handleYearChange = useCallback(
     (value) => {
       const year = value === "all" ? "all" : Number(value);
       setFilters((prev) => ({ ...prev, year }));
+      setPage(1);
       if (year !== "all") {
         const thisYear = new Date().getFullYear();
         setAnchorMs(year === thisYear ? Date.now() : new Date(year, 6, 1).getTime());
@@ -241,7 +307,7 @@ export default function IncidentsView({
           setError(err.message || "Could not delete the event. Restored it.");
         });
     },
-    [data, adminToken, writeIncidents, applyRoadmap, refetch]
+    [data, adminToken, writeIncidents, applyRoadmap, refetch, setSelectedId]
   );
 
   const openEdit = useCallback((entry) => {
@@ -277,7 +343,10 @@ export default function IncidentsView({
 
   /* -------------------------------- render ------------------------------- */
 
-  const recent = showAllRecent ? scoped : scoped.slice(0, RECENT_PAGE);
+  const pageCount = Math.max(1, Math.ceil(scoped.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageStart = (currentPage - 1) * pageSize;
+  const recent = scoped.slice(pageStart, pageStart + pageSize);
 
   return (
     <div className="ops">
@@ -292,14 +361,16 @@ export default function IncidentsView({
             onClick={handleExport}
             disabled={scoped.length === 0}
           >
-            Export CSV
+            <Icon name="download" className="ops-icon" />
+            Export
           </button>
           <button
             type="button"
             className="ops-btn ops-btn--primary"
             onClick={() => setModal({ mode: "add", values: null })}
           >
-            + Add event
+            <Icon name="plus" className="ops-icon" />
+            Add event
           </button>
         </div>
       </div>
@@ -308,48 +379,51 @@ export default function IncidentsView({
 
       <div className="ops__stats">
         <StatCard
-          label="Open incidents"
+          label="Active incidents"
           value={stats.openCount}
           hint={
-            stats.openCount
-              ? `${stats.activeCount} active · ${stats.monitoringCount} monitoring`
-              : "Nothing open right now"
+            <SeverityCounts counts={stats.openSeverity} empty="Nothing open right now" />
           }
           tone={stats.openCount ? "danger" : "ok"}
         />
         <StatCard
-          label={`Incidents (${scopeLabel})`}
+          label={`Incidents · ${scopeLabel}`}
           value={stats.incidentCount}
-          hint={`${stats.criticalCount} critical · ${stats.highPlusCount} high or above`}
-        />
-        <StatCard
-          label="Total downtime"
-          value={formatDuration(stats.downtimeMinutes)}
-          hint={`${stats.domainCount} domain${stats.domainCount === 1 ? "" : "s"} affected`}
+          hint={<SeverityCounts counts={stats.severity} empty="None logged in this scope" />}
           tone="warn"
         />
         <StatCard
-          label="Revenue impact"
+          label={`Downtime · ${scopeLabel}`}
+          value={formatDuration(stats.downtimeMinutes)}
+          hint={
+            stats.mttrMinutes === null
+              ? "No resolved incidents yet"
+              : `Mean time to recovery ${formatDuration(stats.mttrMinutes)}`
+          }
+          tone="info"
+        />
+        <StatCard
+          label={`Revenue impact · ${scopeLabel}`}
           value={formatMoney(stats.revenueAmount)}
           hint={
             stats.symbolicCount
-              ? `+ ${stats.symbolicCount} logged as $ tiers`
-              : "Estimated, from logged events"
+              ? `Plus ${stats.symbolicCount} logged as $ tiers`
+              : "Estimated from logged events"
           }
+          tone="success"
         />
         <StatCard
-          label="Mean time to recovery"
-          value={stats.mttrMinutes === null ? "—" : formatDuration(stats.mttrMinutes)}
-          hint={`${stats.plannedCount} planned change${stats.plannedCount === 1 ? "" : "s"} logged`}
+          label="Domains affected"
+          value={stats.domainCount}
+          hint={formatDomainList(stats.domainLabels)}
         />
       </div>
 
       <div className="ops__filters">
         <div className="ops__filter-row">
-          <label className="ops-field">
-            <span className="ops-field__label">Year</span>
+          <Control label="Year" icon="calendar">
             <select
-              className="ops-select"
+              className="ops-control__input"
               value={filters.year}
               onChange={(e) => handleYearChange(e.target.value)}
             >
@@ -360,12 +434,11 @@ export default function IncidentsView({
                 </option>
               ))}
             </select>
-          </label>
+          </Control>
 
-          <label className="ops-field">
-            <span className="ops-field__label">Domain</span>
+          <Control label="Domain / system" icon="globe">
             <select
-              className="ops-select"
+              className="ops-control__input"
               value={filters.domains && filters.domains.size === 1 ? [...filters.domains][0] : ""}
               onChange={(e) =>
                 setFilter({ domains: e.target.value ? new Set([e.target.value]) : null })
@@ -378,12 +451,11 @@ export default function IncidentsView({
                 </option>
               ))}
             </select>
-          </label>
+          </Control>
 
-          <label className="ops-field">
-            <span className="ops-field__label">Type</span>
+          <Control label="Type" icon="layers">
             <select
-              className="ops-select"
+              className="ops-control__input"
               value={filters.types && filters.types.size === 1 ? [...filters.types][0] : ""}
               onChange={(e) =>
                 setFilter({ types: e.target.value ? new Set([e.target.value]) : null })
@@ -396,24 +468,30 @@ export default function IncidentsView({
                 </option>
               ))}
             </select>
-          </label>
+          </Control>
 
           <label className="ops-field ops-field--grow">
             <span className="ops-field__label">Search</span>
-            <input
-              type="search"
-              className="ops-select"
-              value={filters.search}
-              onChange={(e) => setFilter({ search: e.target.value })}
-              placeholder="Title, domain, cause…"
-            />
+            <span className="ops-control ops-control--search">
+              <Icon name="search" className="ops-control__icon" />
+              <input
+                type="search"
+                className="ops-control__input"
+                value={filters.search}
+                onChange={(e) => setFilter({ search: e.target.value })}
+                placeholder="Search title, domain, cause…"
+              />
+            </span>
           </label>
 
           <button
             type="button"
-            className="ops-btn ops-btn--ghost"
+            className="ops-clear"
             disabled={!filterActive}
-            onClick={() => setFilters(INITIAL_INCIDENT_FILTERS)}
+            onClick={() => {
+              setFilters(INITIAL_INCIDENT_FILTERS);
+              setPage(1);
+            }}
           >
             Clear
           </button>
@@ -434,25 +512,13 @@ export default function IncidentsView({
       </div>
 
       <section className="ops-panel">
-        <header className="ops-panel__head">
-          <div>
-            <h3 className="ops-panel__title">Timeline</h3>
-            <p className="ops-panel__sub">{formatWindowLabel(timeWindow)}</p>
-          </div>
+        <header className="ops-timeline__toolbar">
+          <span className="ops-timeline__range">{formatWindowLabel(timeWindow)}</span>
           <div className="ops-panel__controls">
-            <div className="ops-segment" role="group" aria-label="Zoom">
-              {ZOOM_LEVELS.map((level) => (
-                <button
-                  key={level.id}
-                  type="button"
-                  className={`ops-segment__btn${zoom === level.id ? " is-on" : ""}`}
-                  onClick={() => setZoom(level.id)}
-                >
-                  {level.label}
-                </button>
-              ))}
-            </div>
             <div className="ops-nav">
+              <button type="button" className="ops-nav__today" onClick={handleToday}>
+                Today
+              </button>
               <button
                 type="button"
                 className="ops-nav__btn"
@@ -461,9 +527,6 @@ export default function IncidentsView({
               >
                 ‹
               </button>
-              <button type="button" className="ops-nav__today" onClick={handleToday}>
-                Today
-              </button>
               <button
                 type="button"
                 className="ops-nav__btn"
@@ -471,6 +534,28 @@ export default function IncidentsView({
                 onClick={() => shiftWindow(1)}
               >
                 ›
+              </button>
+            </div>
+            <div className="ops-zoom" role="group" aria-label="Zoom">
+              <span className="ops-zoom__label">Zoom</span>
+              <button
+                type="button"
+                className="ops-nav__btn"
+                aria-label="Zoom out"
+                disabled={zoomIndex === 0}
+                onClick={() => setZoom(ZOOM_LEVELS[zoomIndex - 1].id)}
+              >
+                <Icon name="zoomOut" className="ops-icon" />
+              </button>
+              <span className="ops-zoom__level">{ZOOM_LEVELS[zoomIndex].label}</span>
+              <button
+                type="button"
+                className="ops-nav__btn"
+                aria-label="Zoom in"
+                disabled={zoomIndex === ZOOM_LEVELS.length - 1}
+                onClick={() => setZoom(ZOOM_LEVELS[zoomIndex + 1].id)}
+              >
+                <Icon name="zoomIn" className="ops-icon" />
               </button>
             </div>
           </div>
@@ -504,17 +589,26 @@ export default function IncidentsView({
           />
         )}
 
-        <ul className="ops-legend">
-          {TIMELINE_LEGEND.map((item) => (
-            <li key={item.key}>
-              <span
-                className={`ops-legend__swatch${item.planned ? " is-planned" : ""}`}
-                style={{ background: item.color }}
-              />
-              {item.label}
-            </li>
-          ))}
-        </ul>
+        <div className="ops-legend-row">
+          <ul className="ops-legend">
+            {TIMELINE_LEGEND.map((item) => (
+              <li key={item.key}>
+                <span
+                  className={`ops-legend__swatch${item.planned ? " is-planned" : ""}`}
+                  style={{ background: item.color }}
+                />
+                {item.label}
+              </li>
+            ))}
+          </ul>
+          <p className="ops-legend__totals">
+            Downtime (selected range){" "}
+            <strong>{formatDuration(windowStats.downtimeMinutes)}</strong>
+            <span aria-hidden="true"> · </span>
+            Revenue impact{" "}
+            <strong className="ops-legend__money">{formatMoney(windowStats.revenueAmount)}</strong>
+          </p>
+        </div>
       </section>
 
       <section className="ops-panel">
@@ -525,15 +619,6 @@ export default function IncidentsView({
               {scoped.length} event{scoped.length === 1 ? "" : "s"} · {scopeLabel}
             </p>
           </div>
-          {scoped.length > RECENT_PAGE ? (
-            <button
-              type="button"
-              className="ops-btn ops-btn--ghost"
-              onClick={() => setShowAllRecent((v) => !v)}
-            >
-              {showAllRecent ? "Show recent only" : `Show all ${scoped.length}`}
-            </button>
-          ) : null}
         </header>
 
         {scoped.length === 0 ? (
@@ -543,15 +628,15 @@ export default function IncidentsView({
             <table className="ops-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Domain</th>
-                  <th>Event</th>
+                  <th>Date &amp; time (start)</th>
+                  <th>Title</th>
+                  <th>Domain / system</th>
                   <th>Type</th>
-                  <th>Severity</th>
+                  <th>Impact</th>
                   <th>Duration</th>
-                  <th>Customer impact</th>
-                  <th>Revenue</th>
                   <th>Status</th>
+                  <th>Revenue impact</th>
+                  {adminUnlocked ? <th className="ops-table__actions-col">Actions</th> : null}
                 </tr>
               </thead>
               <tbody>
@@ -569,41 +654,127 @@ export default function IncidentsView({
                     }}
                   >
                     <td className="ops-table__date">{formatEventDate(entry)}</td>
-                    <td>{entry.domainLabel}</td>
-                    <td className="ops-table__event">{entry.title}</td>
-                    <td>
-                      <span
-                        className="ops-tag"
-                        style={{ "--tag-color": entry.type.color }}
-                      >
-                        {entry.type.label}
-                      </span>
+                    <td className="ops-table__event">
+                      <span className="ops-table__title">{entry.title}</span>
+                      {entry.customerImpact ? (
+                        <span className="ops-table__sub">{entry.customerImpact}</span>
+                      ) : null}
                     </td>
+                    <td className="ops-table__domain">{entry.domainLabel}</td>
+                    <td className="ops-table__type">{entry.type.label}</td>
                     <td>
                       <span
-                        className="ops-tag ops-tag--solid"
+                        className="ops-tag ops-tag--soft"
                         style={{ "--tag-color": entry.severity.color }}
                       >
                         {entry.severity.label}
                       </span>
                     </td>
-                    <td>{entry.ongoing ? "Ongoing" : formatDuration(entry.durationMinutes)}</td>
-                    <td className="ops-table__impact">{entry.customerImpact || "—"}</td>
-                    <td>{formatRevenue(entry.revenue)}</td>
+                    <td className="ops-table__duration">
+                      {entry.ongoing ? "Ongoing" : formatDuration(entry.durationMinutes)}
+                    </td>
                     <td>
                       <span
-                        className="ops-tag"
+                        className="ops-tag ops-tag--soft"
                         style={{ "--tag-color": entry.status.color }}
                       >
                         {entry.status.label}
                       </span>
                     </td>
+                    <td className="ops-table__money">{formatRevenue(entry.revenue)}</td>
+                    {adminUnlocked ? (
+                      <td className="ops-table__actions-col">
+                        <div className="ops-table__actions">
+                          <button
+                            type="button"
+                            className="ops-row-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEdit(entry);
+                            }}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            className="ops-row-btn ops-row-btn--danger"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(entry);
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+
+        {scoped.length > 0 ? (
+          <div className="ops-pager">
+            <span className="ops-pager__count">
+              {pageStart + 1}–{Math.min(pageStart + pageSize, scoped.length)} of {scoped.length}{" "}
+              event{scoped.length === 1 ? "" : "s"}
+            </span>
+            <div className="ops-pager__controls">
+              <button
+                type="button"
+                className="ops-nav__btn"
+                aria-label="Previous page"
+                disabled={currentPage === 1}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                ‹
+              </button>
+              {pageNumbers(currentPage, pageCount).map((n, i) =>
+                n === "…" ? (
+                  <span key={`gap-${i}`} className="ops-pager__gap">
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={n}
+                    type="button"
+                    className={`ops-pager__page${n === currentPage ? " is-on" : ""}`}
+                    aria-current={n === currentPage ? "page" : undefined}
+                    onClick={() => setPage(n)}
+                  >
+                    {n}
+                  </button>
+                )
+              )}
+              <button
+                type="button"
+                className="ops-nav__btn"
+                aria-label="Next page"
+                disabled={currentPage === pageCount}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                ›
+              </button>
+              <select
+                className="ops-select ops-pager__size"
+                aria-label="Rows per page"
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+              >
+                {[10, 25, 50, 100].map((n) => (
+                  <option key={n} value={n}>
+                    {n} / page
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <IncidentDetail

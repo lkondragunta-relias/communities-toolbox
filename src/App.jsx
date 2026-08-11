@@ -18,6 +18,7 @@ import SettingsView from "./components/views/SettingsView";
 import ProjectDetail from "./components/ProjectDetail";
 import InitiativeTooltip from "./components/InitiativeTooltip";
 import { useRoadmapData } from "./hooks/useRoadmapData";
+import { ROUTES, useRoute } from "./hooks/useRoute";
 import { useTheme } from "./hooks/useTheme";
 import { resolveStatus } from "./config/statusConfig";
 import {
@@ -38,19 +39,11 @@ import {
   INITIAL_FILTER_STATE,
 } from "./utils/roadmapUtils";
 
-const VIEW_TITLES = {
-  overview: "Overview",
-  timeline: "Roadmap",
-  table: "Projects",
-  incidents: "Communities Operations Timeline",
-  sites: "Cookiebot",
-  settings: "Settings",
-};
+const VIEW_TITLES = Object.fromEntries(ROUTES.map((r) => [r.id, r.title]));
 
 /** Views that own their own header actions, so the topbar Add button hides. */
 const SELF_MANAGED_VIEWS = new Set(["incidents", "sites", "settings"]);
 
-const VIEW_STORAGE_KEY = "roadmap_active_view";
 const SIDEBAR_STORAGE_KEY = "roadmap_sidebar_collapsed";
 
 /** Turn an Add/Edit form payload into a roadmap item (for optimistic insert). */
@@ -75,16 +68,6 @@ function formPayloadToItem(payload) {
   return item;
 }
 
-function getInitialView() {
-  try {
-    const saved = localStorage.getItem(VIEW_STORAGE_KEY);
-    if (saved && VIEW_TITLES[saved]) return saved;
-  } catch {
-    /* ignore */
-  }
-  return "overview";
-}
-
 function getInitialCollapsed() {
   try {
     return localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1";
@@ -94,13 +77,16 @@ function getInitialCollapsed() {
 }
 
 export default function App() {
-  const { preference: themePreference, setThemePreference } = useTheme();
+  useTheme();
   const { data, quarters, loading, error, revalidating, refetch, patchInitiative, applyRoadmap } =
     useRoadmapData();
   const [loaderVisible, setLoaderVisible] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(getInitialCollapsed);
-  const [view, setView] = useState(getInitialView);
-  const [selectedProject, setSelectedProject] = useState(null);
+  const { view, params, navigate, replace } = useRoute();
+  // Detail panes are addressable, so the drawer state lives in the URL:
+  //   #/roadmap/platform/PLAT-1   #/operations/INC-0002
+  const selectedProject = params.length >= 2 ? { domain: params[0], id: params[1] } : null;
+  const selectedIncidentId = view === "incidents" ? params[0] || null : null;
   const [filterState, setFilterState] = useState(INITIAL_FILTER_STATE);
   const [tooltip, setTooltip] = useState({ item: null, target: null, domain: null });
   const hideTooltipTimerRef = useRef(null);
@@ -280,9 +266,17 @@ export default function App() {
     setAddPrefill(null);
   }, []);
 
-  const handleSelectProject = useCallback(({ domain, id }) => {
-    setSelectedProject({ domain, id });
-  }, []);
+  const handleSelectProject = useCallback(
+    ({ domain, id }) => navigate(view === "table" ? "table" : "timeline", [domain, id]),
+    [navigate, view]
+  );
+
+  const handleCloseProject = useCallback(() => replace(view, []), [replace, view]);
+
+  const handleSelectIncident = useCallback(
+    (id) => navigate("incidents", id ? [id] : []),
+    [navigate]
+  );
 
   const handleEditInitiative = useCallback(({ domain, item }) => {
     if (!domain || !item) return;
@@ -306,14 +300,6 @@ export default function App() {
 
   // Re-show the loader if a full (non-background) load ever starts again.
   if (loading && !loaderVisible) setLoaderVisible(true);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(VIEW_STORAGE_KEY, view);
-    } catch {
-      /* ignore */
-    }
-  }, [view]);
 
   useEffect(() => {
     try {
@@ -395,26 +381,14 @@ export default function App() {
 
       <Sidebar
         view={view}
-        onNavigate={setView}
+        onNavigate={navigate}
         collapsed={sidebarCollapsed}
-        themePreference={themePreference}
-        onThemeChange={setThemePreference}
+        onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
       />
 
       <main className="app__main">
         <header className="app__topbar">
           <div className="app__topbar-text">
-            <button
-              type="button"
-              className="app__sidebar-toggle"
-              aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
-              aria-pressed={sidebarCollapsed}
-              onClick={() => setSidebarCollapsed((c) => !c)}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M3 5h18M3 12h18M3 19h18" />
-              </svg>
-            </button>
             <div>
               <h1 className="app__page-title">
                 {pageTitle}
@@ -449,6 +423,8 @@ export default function App() {
                 onLock={handleAdminLock}
                 applyRoadmap={applyRoadmap}
                 refetch={refetch}
+                selectedId={selectedIncidentId}
+                onSelectId={handleSelectIncident}
               />
             ) : view === "sites" ? (
               <SitesView
@@ -517,7 +493,7 @@ export default function App() {
           canDelete={canDeleteInitiatives}
           onEdit={handleEditInitiative}
           onDelete={handleDeleteFromTable}
-          onClose={() => setSelectedProject(null)}
+          onClose={handleCloseProject}
         />
       ) : null}
 

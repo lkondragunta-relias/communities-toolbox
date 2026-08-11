@@ -347,6 +347,35 @@ export function isIncidentFilterActive(filters) {
  * KPI numbers. `scoped` respects the active filters; `all` is every event, so
  * an open incident from last year still shows up on the "Open" card.
  */
+function countBySeverity(entries) {
+  const counts = { Critical: 0, High: 0, Medium: 0, Low: 0, Other: 0 };
+  entries.forEach((e) => {
+    const key = e.severity.label;
+    if (counts[key] === undefined) counts.Other += 1;
+    else counts[key] += 1;
+  });
+  return counts;
+}
+
+/** "High: 4 · Medium: 5 · Low: 3" — only the severities actually present. */
+export function formatSeverityBreakdown(counts, short = false) {
+  const labels = short
+    ? { Critical: "Crit", High: "High", Medium: "Med", Low: "Low", Other: "Other" }
+    : { Critical: "Critical", High: "High", Medium: "Medium", Low: "Low", Other: "Other" };
+  return Object.keys(counts)
+    .filter((key) => counts[key] > 0)
+    .map((key) => `${labels[key]}: ${counts[key]}`)
+    .join(" · ");
+}
+
+/** "RLMS, RLP, Relias Academy + 4" */
+export function formatDomainList(labels, max = 3) {
+  const sorted = [...labels].sort((a, b) => a.localeCompare(b));
+  if (sorted.length === 0) return "None affected";
+  if (sorted.length <= max) return sorted.join(", ");
+  return `${sorted.slice(0, max).join(", ")} + ${sorted.length - max}`;
+}
+
 export function computeIncidentStats(scoped, all) {
   const open = all.filter((e) => e.status.open && e.isIncident);
   const incidents = scoped.filter((e) => e.isIncident);
@@ -367,11 +396,15 @@ export function computeIncidentStats(scoped, all) {
     ? Math.round(resolved.reduce((sum, e) => sum + e.durationMinutes, 0) / resolved.length)
     : null;
 
+  const domainLabels = [...new Set(incidents.map((e) => e.domainLabel))];
+
   return {
     openCount: open.length,
     activeCount: open.filter((e) => e.status.id === "active").length,
     monitoringCount: open.filter((e) => e.status.id === "monitoring").length,
+    openSeverity: countBySeverity(open),
     incidentCount: incidents.length,
+    severity: countBySeverity(incidents),
     highPlusCount: highPlus.length,
     criticalCount: critical.length,
     plannedCount: scoped.length - incidents.length,
@@ -379,7 +412,8 @@ export function computeIncidentStats(scoped, all) {
     revenueAmount,
     symbolicCount,
     mttrMinutes,
-    domainCount: new Set(incidents.map((e) => e.domainKey)).size,
+    domainCount: domainLabels.length,
+    domainLabels,
     totalCount: scoped.length,
   };
 }
