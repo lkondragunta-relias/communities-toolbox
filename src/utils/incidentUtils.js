@@ -463,17 +463,18 @@ export function startOfMonth(ms) {
 }
 
 const WEEKS_IN_VIEW = 12;
-const DAYS_IN_VIEW = 14;
+const DAYS_IN_VIEW = 7;
 const MONTHS_IN_VIEW = 12;
 
 /**
  * The slice of time the timeline draws. Month zoom snaps to the selected
- * calendar year so "2026" means Jan–Dec; week/day zoom center on the anchor.
+ * calendar year so "2026" means Jan–Dec; week zoom centers on the anchor,
+ * while day zoom ends on the anchor date.
  */
 export function buildTimelineWindow(zoom, anchorMs, year = "all") {
   if (zoom === "day") {
     const start = startOfDay(anchorMs);
-    start.setDate(start.getDate() - Math.floor(DAYS_IN_VIEW / 2) + 1);
+    start.setDate(start.getDate() - DAYS_IN_VIEW + 1);
     const end = new Date(start);
     end.setDate(end.getDate() + DAYS_IN_VIEW);
     return { startMs: start.getTime(), endMs: end.getTime() };
