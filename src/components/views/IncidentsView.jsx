@@ -144,7 +144,7 @@ export default function IncidentsView({
   }, []);
 
   const [filters, setFilters] = useState(INITIAL_INCIDENT_FILTERS);
-  const [zoom, setZoom] = useState("month");
+  const [zoom, setZoom] = useState("day");
   const [anchorMs, setAnchorMs] = useState(() => Date.now());
   const [modal, setModal] = useState(null);
   const [page, setPage] = useState(1);
