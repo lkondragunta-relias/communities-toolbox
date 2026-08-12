@@ -248,6 +248,14 @@ export default function IncidentsView({
         setAnchorMs(new Date(Number(filters.year) + direction, 6, 1).getTime());
         return;
       }
+      if (zoom === "day") {
+        setAnchorMs((prev) => {
+          const next = new Date(prev);
+          next.setDate(next.getDate() + direction * 7);
+          return next.getTime();
+        });
+        return;
+      }
       setAnchorMs((prev) => prev + direction * windowStep(zoom, timeWindow));
     },
     [pinnedToYear, filters.year, zoom, timeWindow]
