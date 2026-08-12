@@ -22,6 +22,7 @@ export const ZOOM_LEVELS = [
   { id: "month", label: "Months" },
   { id: "week", label: "Weeks" },
   { id: "day", label: "Days" },
+  { id: "hour", label: "Hours" },
 ];
 
 /* ------------------------------- parsing -------------------------------- */
@@ -472,6 +473,13 @@ const MONTHS_IN_VIEW = 12;
  * while day zoom ends on the anchor date.
  */
 export function buildTimelineWindow(zoom, anchorMs, year = "all") {
+  if (zoom === "hour") {
+    const start = startOfDay(anchorMs);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return { startMs: start.getTime(), endMs: end.getTime() };
+  }
+
   if (zoom === "day") {
     const start = startOfDay(anchorMs);
     start.setDate(start.getDate() - DAYS_IN_VIEW + 1);
@@ -501,6 +509,7 @@ export function buildTimelineWindow(zoom, anchorMs, year = "all") {
 
 /** How far prev/next moves the window, in ms. */
 export function windowStep(zoom, window) {
+  if (zoom === "hour") return DAY_MS;
   if (zoom === "day") return DAYS_IN_VIEW * DAY_MS;
   if (zoom === "week") return WEEKS_IN_VIEW * 7 * DAY_MS;
   return window.endMs - window.startMs;
@@ -516,6 +525,28 @@ const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
  */
 export function buildTicks(window, zoom) {
   const ticks = [];
+  if (zoom === "hour") {
+    const cursor = new Date(window.startMs);
+    while (cursor.getTime() < window.endMs) {
+      const nextMs = Math.min(cursor.getTime() + HOUR_MS, window.endMs);
+      ticks.push({
+        key: `h-${cursor.getTime()}`,
+        startMs: cursor.getTime(),
+        endMs: nextMs,
+        label: cursor.toLocaleTimeString("en-US", { hour: "numeric" }),
+        sub: "",
+        group: cursor.toLocaleDateString("en-US", {
+          weekday: "long",
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }),
+      });
+      cursor.setTime(nextMs);
+    }
+    return ticks;
+  }
+
   if (zoom === "day") {
     const cursor = startOfDay(window.startMs);
     while (cursor.getTime() < window.endMs) {
@@ -668,6 +699,7 @@ export function formatWindowLabel(window) {
   const opts = { month: "short", day: "numeric", year: "numeric" };
   const start = new Date(window.startMs).toLocaleDateString("en-US", opts);
   const end = new Date(window.endMs - 1).toLocaleDateString("en-US", opts);
+  if (start === end) return start;
   return `${start} – ${end}`;
 }
 
