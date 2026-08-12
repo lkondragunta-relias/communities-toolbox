@@ -278,7 +278,7 @@ export default function Filters({
       )}
 
       {statusFilters.length > 0 && (
-        <FilterRow labelText="Status:">
+        <FilterRow labelText="Status type:">
           <FilterPill
             label="All statuses"
             teamActive={!selectedStatuses || selectedStatuses.size === 0}
