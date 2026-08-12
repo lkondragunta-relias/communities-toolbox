@@ -12,7 +12,7 @@ const LANE_GAP = 5;
 const TRACK_PADDING = 9;
 
 /** Narrowest a tick column may get before the timeline starts scrolling. */
-const MIN_TICK_PX = { month: 78, week: 62, day: 46 };
+const MIN_TICK_PX = { month: 78, week: 62, day: 46, hour: 36 };
 
 function rowHeight(laneCount) {
   return TRACK_PADDING * 2 + laneCount * LANE_HEIGHT + Math.max(0, laneCount - 1) * LANE_GAP;

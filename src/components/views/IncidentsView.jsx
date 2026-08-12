@@ -239,6 +239,13 @@ export default function IncidentsView({
     });
   }, []);
 
+  const zoomIn = useCallback(() => {
+    const nextZoom = ZOOM_LEVELS[zoomIndex + 1]?.id;
+    if (!nextZoom) return;
+    if (nextZoom === "hour") setAnchorMs(Date.now());
+    setZoom(nextZoom);
+  }, [zoomIndex]);
+
   const pinnedToYear = zoom === "month" && filters.year !== "all";
 
   const shiftWindow = useCallback(
@@ -252,6 +259,14 @@ export default function IncidentsView({
         setAnchorMs((prev) => {
           const next = new Date(prev);
           next.setDate(next.getDate() + direction * 7);
+          return next.getTime();
+        });
+        return;
+      }
+      if (zoom === "hour") {
+        setAnchorMs((prev) => {
+          const next = new Date(prev);
+          next.setDate(next.getDate() + direction);
           return next.getTime();
         });
         return;
@@ -567,7 +582,7 @@ export default function IncidentsView({
                 className="ops-nav__btn"
                 aria-label="Zoom in"
                 disabled={zoomIndex === ZOOM_LEVELS.length - 1}
-                onClick={() => setZoom(ZOOM_LEVELS[zoomIndex + 1].id)}
+                onClick={zoomIn}
               >
                 <Icon name="zoomIn" className="ops-icon" />
               </button>
