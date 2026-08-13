@@ -1224,6 +1224,40 @@ html[data-theme="light"] .delete-overlay__dot::before {
   color: var(--text);
 }
 
+.access-gate {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: var(--sp-5);
+  background: var(--bg);
+}
+
+.access-gate__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  width: min(400px, 100%);
+  padding: var(--sp-6);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  box-shadow: 0 16px 40px var(--shadow);
+}
+
+.access-gate__title {
+  font-size: var(--t-page);
+  font-weight: 600;
+}
+
+.access-gate__description {
+  margin-top: var(--sp-2);
+  color: var(--text-muted);
+}
+
+.access-gate__submit {
+  width: 100%;
+}
+
 .roadmap__error {
   padding: 24px;
   font-size: var(--t-title);
