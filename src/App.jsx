@@ -94,17 +94,14 @@ export default function App() {
   const [addPrefill, setAddPrefill] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
   const [adminToken, setAdminToken] = useState(() => {
-    // Priority: explicit ?token= in the URL → configured .env token → any saved
-    // token → local fallback. .env wins over stale sessionStorage so a leftover
-    // test token can't override the real one.
+    // SiteAccessGate validates URL and saved tokens before App mounts.
     const urlToken = applyAdminTokenFromUrl();
     if (urlToken) return urlToken;
-    const envToken = (import.meta.env.VITE_ADMIN_TOKEN || "").trim();
-    if (envToken) {
-      clearStoredAdminTokens(); // drop any stale stored token so it can't resurface
-      return envToken;
-    }
-    return getStoredAdminToken() || (isLocalMode() ? "local" : "");
+    return (
+      getStoredAdminToken() ||
+      (import.meta.env.VITE_ADMIN_TOKEN || "").trim() ||
+      (isLocalMode() ? "local" : "")
+    );
   });
 
   const handleAdminUnlock = useCallback((token) => {
