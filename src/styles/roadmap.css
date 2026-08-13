@@ -2547,7 +2547,7 @@ html, body, #root { height: 100%; }
   flex-wrap: wrap;
 }
 
-.ops__intro { font-size: var(--t-body); font-weight: 700; color: var(--text-muted); max-width: 68ch; }
+.ops__intro { font-size: var(--t-title); font-weight: 700; color: var(--text-muted); max-width: 68ch; }
 .ops__toolbar-actions { display: flex; gap: var(--sp-2); flex-shrink: 0; }
 
 .ops__error {
