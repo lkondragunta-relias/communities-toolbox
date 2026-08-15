@@ -5,9 +5,10 @@ import IncidentModal from "../incidents/IncidentModal";
 import Icon from "../Icon";
 import {
   INCIDENT_SEVERITIES,
-  INCIDENT_STATUSES,
   INCIDENT_TYPES,
   TIMELINE_LEGEND,
+  DEFAULT_OUTAGE_CAUSES,
+  DEFAULT_TRACK_EVENT_CAUSES,
 } from "../../config/incidentConfig";
 import { addIncident, deleteIncident, updateIncident } from "../../services/sheetsApi";
 import { getDomainNameMap } from "../../utils/roadmapUtils";
@@ -527,16 +528,16 @@ export default function IncidentsView({
         </div>
 
         <TogglePills
-          label="Severity"
-          options={INCIDENT_SEVERITIES}
-          selected={filters.severities}
-          onChange={(severities) => setFilter({ severities })}
+          label="Outage"
+          options={DEFAULT_OUTAGE_CAUSES}
+          selected={filters.outageCauses}
+          onChange={(outageCauses) => setFilter({ outageCauses })}
         />
         <TogglePills
-          label="Status"
-          options={INCIDENT_STATUSES}
-          selected={filters.statuses}
-          onChange={(statuses) => setFilter({ statuses })}
+          label="Track Event"
+          options={DEFAULT_TRACK_EVENT_CAUSES}
+          selected={filters.trackEventCauses}
+          onChange={(trackEventCauses) => setFilter({ trackEventCauses })}
         />
       </div>
 

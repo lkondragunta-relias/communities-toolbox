@@ -16,6 +16,8 @@
  *   Priorities : Title(=label) | Color | SortOrder
  *   Incidents  : ID | Key | Start | End | Domain | Title | Type | Severity | Duration |
  *                Customer Impact | Revenue Impact | Status | Notes | Links
+ *   Incident Config : Section | Outage Cause | Track Event Cause | Domain |
+ *                     Severity | Status | Revenue Impact | Customer Impact Prefix
  *
  * The browser app reads GET (returns the flat JSON below) and writes via POST
  * with { action, adminToken, ... }. Column order is flexible — columns are
@@ -78,6 +80,7 @@ function doPostLocked_(e) {
     if (action === 'deleteincident') return jsonResponse(deleteIncident_(body));
     if (action === 'resolveincident') return jsonResponse(resolveIncident_(body));
     if (action === 'listopenincidents') return jsonResponse(listOpenIncidents_());
+    if (action === 'setupincidentconfig') return jsonResponse(setupIncidentConfig_());
 
     if (action === 'addcookiebotsite') return jsonResponse(addCookiebotSite_(body));
     if (action === 'deletecookiebotsite') return jsonResponse(deleteCookiebotSite_(body));
@@ -213,6 +216,7 @@ function readRoadmap_() {
     statuses: readStatuses_(),
     priorities: readPriorities_(),
     incidents: readIncidents_(),
+    incidentConfig: readIncidentConfig_(),
     cookiebotSites: readCookiebotSites_(),
     cookiebotReports: readCookiebotReports_(),
   };
@@ -601,6 +605,126 @@ function deletePriority_(body) {
   return deleteDefRow_('priorit', String(body.label || body.id || '').trim());
 }
 
+/* ========================= Incident configuration ========================= */
+
+var INCIDENT_CONFIG_SHEET_NAME = 'Incident Config';
+var INCIDENT_CONFIG_COLUMN_DEFS = [
+  { key: 'sections', header: 'Section', values: ['Outage', 'Track Event'], width: 130 },
+  { key: 'outageCauses', header: 'Outage Cause', values: [
+    'CDN / Akamai', 'Application Failure', 'Database Failure', 'Hosting Issue',
+    'Third-Party Dependency', 'Bot Attack', 'Infrastructure Degradation', 'Other',
+  ], width: 190 },
+  { key: 'trackEventCauses', header: 'Track Event Cause', values: [
+    'Release', 'Hotfix', 'Rollback', 'Infra Change', 'Scheduled Maintenance',
+    'Security Incident', 'Partial Degradation', 'Functional Issue', 'Migration', 'Other',
+  ], width: 190 },
+  { key: 'domains', header: 'Domain', values: [
+    'Relias Academy', 'Nurse.com', 'Relias Academy LMS', 'Relias Platform',
+    'Relias Media', 'Multiple', 'Infrastructure',
+  ], width: 170 },
+  { key: 'severities', header: 'Severity', values: ['Critical', 'High', 'Medium', 'Low'], width: 110 },
+  { key: 'statuses', header: 'Status', values: ['Active', 'Monitoring', 'Resolved'], width: 120 },
+  { key: 'revenueImpacts', header: 'Revenue Impact', values: ['$', '$$', '$$$'], width: 140 },
+  { key: 'customerImpactPrefixes', header: 'Customer Impact Prefix', values: [
+    'None', 'Minor', 'Partial', 'Full',
+  ], width: 190 },
+];
+
+function getIncidentConfigSheet_() {
+  var sheets = ss_().getSheets();
+  var target = normalize_(INCIDENT_CONFIG_SHEET_NAME);
+  for (var i = 0; i < sheets.length; i++) {
+    if (normalize_(sheets[i].getName()) === target) return sheets[i];
+  }
+  return null;
+}
+
+function incidentConfigColumn_(def) {
+  for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
+    if (INCIDENT_CONFIG_COLUMN_DEFS[i].key === def.key) return i + 1;
+  }
+  return 0;
+}
+
+function defaultIncidentConfig_() {
+  var out = {};
+  for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
+    var def = INCIDENT_CONFIG_COLUMN_DEFS[i];
+    out[def.key] = def.values.slice();
+  }
+  return out;
+}
+
+function readIncidentConfig_() {
+  var sheet = getIncidentConfigSheet_();
+  if (!sheet) return defaultIncidentConfig_();
+
+  var out = {};
+  // Bulk range reads are unsupported when Google Sheets assigns table column
+  // types. Single-cell reads work for both typed tables and plain ranges.
+  var maxRow = sheet.getMaxRows();
+  for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
+    var def = INCIDENT_CONFIG_COLUMN_DEFS[i];
+    var col = incidentConfigColumn_(def);
+    var values = [];
+    if (col > 0 && maxRow >= 2) {
+      for (var row = 2; row <= maxRow; row++) {
+        var value = String(sheet.getRange(row, col).getValue() || '').trim();
+        if (!value) break;
+        values.push(value);
+      }
+    }
+    out[def.key] = values;
+  }
+  return out;
+}
+
+/**
+ * Create and seed a new config tab. Existing list values, including intentionally
+ * empty lists, are never replaced when the setup is run again.
+ */
+function ensureIncidentConfigSheet_() {
+  var sheet = getIncidentConfigSheet_();
+  var seedDefaults = !sheet;
+  if (!sheet) sheet = ss_().insertSheet(INCIDENT_CONFIG_SHEET_NAME);
+  if (!seedDefaults) {
+    seedDefaults = !String(sheet.getRange(1, 1).getValue() || '').trim();
+  }
+
+  ensureColumnCount_(sheet, INCIDENT_CONFIG_COLUMN_DEFS.length);
+  for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
+    var def = INCIDENT_CONFIG_COLUMN_DEFS[i];
+    var col = i + 1;
+    sheet.getRange(1, col).setValue(def.header);
+    sheet.setColumnWidth(col, def.width);
+
+    if (seedDefaults) {
+      var values = def.values.map(function (value) { return [value]; });
+      sheet.getRange(2, col, values.length, 1).setValues(values);
+    }
+  }
+
+  styleIncidentHeaders_(sheet, INCIDENT_CONFIG_COLUMN_DEFS.length);
+  return sheet;
+}
+
+function setupIncidentConfig_() {
+  var configSheet = ensureIncidentConfigSheet_();
+  var incidentSheet = getIncidentSheet_();
+  if (incidentSheet) applyIncidentValidation_(incidentSheet, null);
+  return {
+    ok: true,
+    sheet: configSheet.getName(),
+    incidentConfig: readIncidentConfig_(),
+  };
+}
+
+/** Run from the spreadsheet menu when setting up the workbook by hand. */
+function setupIncidentConfigSheet() {
+  var result = setupIncidentConfig_();
+  return 'Incident Config tab ready: "' + result.sheet + '"';
+}
+
 /* ==================== Incidents (Operations Timeline) ==================== */
 /*
  * Tab name must contain "incident". Headers (row 1, order flexible):
@@ -636,6 +760,7 @@ var INCIDENT_COLUMN_DEFS = [
   { key: 'domain', header: 'Domain', aliases: ['domain', 'system', 'site', 'property'], width: 150 },
   { key: 'title', header: 'Title', aliases: ['title', 'event', 'name', 'summary'], width: 220 },
   { key: 'type', header: 'Type', aliases: ['type', 'event type'], width: 160 },
+  { key: 'cause', header: 'Cause', aliases: ['cause', 'root cause type', 'event cause'], width: 160 },
   { key: 'severity', header: 'Severity', aliases: ['severity', 'impact level'], width: 100 },
   { key: 'duration', header: 'Duration', aliases: ['duration'], width: 90 },
   { key: 'customerImpact', header: 'Customer Impact', aliases: ['customer impact', 'customer', 'impact'], width: 220 },
@@ -647,8 +772,14 @@ var INCIDENT_COLUMN_DEFS = [
 
 /** Dropdown values written as data validation when a column is created. */
 var INCIDENT_CHOICES = {
-  type: ['Outage', 'Degradation', 'Integration', 'Security', 'Vendor Issue',
-    'Release', 'Infrastructure Change', 'Migration', 'Maintenance'],
+  type: ['Outage', 'Track Event'],
+  cause: [
+    // Outage causes
+    'CDN / Akamai', 'Application Failure', 'Hosting Issue', 'Bot Attack', 'Infra Degradation', 'Other',
+    // Track Event causes
+    'Release', 'Hotfix', 'Infra Change', 'Scheduled Maintenance',
+    'Security Incident', 'Partial Degradation', 'Functional Issue', 'Migration'
+  ],
   severity: ['Critical', 'High', 'Medium', 'Low'],
   status: ['Active', 'Monitoring', 'Resolved'],
 };
@@ -667,6 +798,21 @@ function incidentColumns_(sheet) {
   return cols;
 }
 
+function getIncidentSheet_() {
+  var sheets = ss_().getSheets();
+  var exact = normalize_(INCIDENT_SHEET_NAME);
+  for (var i = 0; i < sheets.length; i++) {
+    if (normalize_(sheets[i].getName()) === exact) return sheets[i];
+  }
+  for (var j = 0; j < sheets.length; j++) {
+    var name = normalize_(sheets[j].getName());
+    if (name.indexOf('incident') >= 0 && name !== normalize_(INCIDENT_CONFIG_SHEET_NAME)) {
+      return sheets[j];
+    }
+  }
+  return null;
+}
+
 /* ------------------------- Self-setup (create/repair) --------------------- */
 
 /**
@@ -677,7 +823,7 @@ function incidentColumns_(sheet) {
  * Reads never call this; only writes do, so a GET can't mutate the spreadsheet.
  */
 function ensureIncidentSheet_() {
-  var sheet = getSheetByKeyword_('incident');
+  var sheet = getIncidentSheet_();
   if (!sheet) return createIncidentSheet_();
   addMissingIncidentHeaders_(sheet);
   return sheet;
@@ -746,13 +892,21 @@ function ensureColumnCount_(sheet, needed) {
 }
 
 /**
- * Put dropdowns on Type / Severity / Status. Invalid values are still allowed —
- * the app matches loosely, and a blocked paste is worse than an odd value.
+ * Apply legacy Type validation plus config-backed Domain, Severity, Status, and
+ * Revenue Impact validation. Invalid values remain allowed so historical data
+ * is not blocked when an option is retired from the config.
  */
 function applyIncidentValidation_(sheet, onlyKeys) {
   var cols = incidentColumns_(sheet);
   var rows = sheet.getMaxRows() - 1;
   if (rows < 1) return;
+  var configSheet = getIncidentConfigSheet_();
+  var configKeys = {
+    domain: 'domains',
+    severity: 'severities',
+    status: 'statuses',
+    revenueImpact: 'revenueImpacts',
+  };
 
   for (var key in INCIDENT_CHOICES) {
     if (!INCIDENT_CHOICES.hasOwnProperty(key)) continue;
@@ -765,6 +919,33 @@ function applyIncidentValidation_(sheet, onlyKeys) {
       .build();
     sheet.getRange(2, col, rows, 1).setDataValidation(rule);
   }
+
+  if (!configSheet) return;
+  for (var incidentKey in configKeys) {
+    if (!configKeys.hasOwnProperty(incidentKey)) continue;
+    if (onlyKeys && onlyKeys.indexOf(incidentKey) < 0) continue;
+    var incidentCol = cols[incidentKey];
+    if (!incidentCol || incidentCol < 1) continue;
+
+    var configKey = configKeys[incidentKey];
+    var configDef = null;
+    for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
+      if (INCIDENT_CONFIG_COLUMN_DEFS[i].key === configKey) {
+        configDef = INCIDENT_CONFIG_COLUMN_DEFS[i];
+        break;
+      }
+    }
+    if (!configDef) continue;
+    var configCol = incidentConfigColumn_(configDef);
+    if (!configCol || configCol < 1 || configSheet.getMaxRows() < 2) continue;
+
+    var configRange = configSheet.getRange(2, configCol, configSheet.getMaxRows() - 1, 1);
+    var configRule = SpreadsheetApp.newDataValidation()
+      .requireValueInRange(configRange, true)
+      .setAllowInvalid(true)
+      .build();
+    sheet.getRange(2, incidentCol, rows, 1).setDataValidation(configRule);
+  }
 }
 
 /** Run once from the script editor (or the menu) to create/repair the tab. */
@@ -776,6 +957,7 @@ function setupIncidentsSheet() {
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('Communities Toolbox')
+    .addItem('Set up Incident Config tab', 'setupIncidentConfigSheet')
     .addItem('Set up Incidents tab', 'setupIncidentsSheet')
     .addToUi();
 }
@@ -792,7 +974,7 @@ function formatIncidentDateCell_(value) {
 }
 
 function readIncidents_() {
-  var sheet = getSheetByKeyword_('incident');
+  var sheet = getIncidentSheet_();
   if (!sheet) return [];
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];

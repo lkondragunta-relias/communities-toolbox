@@ -278,6 +278,7 @@ export function normalizeIncident(raw, index, { domainNames = {}, nowMs = Date.n
     type,
     severity,
     status,
+    cause: String(raw.cause || "").trim(),
     customerImpact: String(raw.customerImpact || "").trim(),
     revenue: parseRevenue(raw.revenueImpact),
     notes: String(raw.notes || "").trim(),
@@ -322,6 +323,8 @@ export const INITIAL_INCIDENT_FILTERS = {
   severities: null,
   types: null,
   statuses: null,
+  outageCauses: null,
+  trackEventCauses: null,
   search: "",
 };
 
@@ -345,6 +348,14 @@ export function filterIncidents(entries, filters) {
     if (!matchesSet(filters.severities, e.severity.label)) return false;
     if (!matchesSet(filters.types, e.type.label)) return false;
     if (!matchesSet(filters.statuses, e.status.label)) return false;
+    // Outage cause filter: only applies to Outage-type events
+    if (filters.outageCauses && filters.outageCauses.size > 0) {
+      if (e.type.label !== "Outage" || !filters.outageCauses.has(e.cause)) return false;
+    }
+    // Track Event cause filter: only applies to Track Event-type events
+    if (filters.trackEventCauses && filters.trackEventCauses.size > 0) {
+      if (e.type.label !== "Track Event" || !filters.trackEventCauses.has(e.cause)) return false;
+    }
     if (query) {
       const haystack = [e.title, e.domainLabel, e.customerImpact, e.notes, e.type.label, e.id]
         .join(" ")
@@ -362,6 +373,8 @@ export function isIncidentFilterActive(filters) {
     (filters.severities && filters.severities.size > 0) ||
     (filters.types && filters.types.size > 0) ||
     (filters.statuses && filters.statuses.size > 0) ||
+    (filters.outageCauses && filters.outageCauses.size > 0) ||
+    (filters.trackEventCauses && filters.trackEventCauses.size > 0) ||
     Boolean(String(filters.search || "").trim())
   );
 }
