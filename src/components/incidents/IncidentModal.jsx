@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  DEFAULT_OUTAGE_CAUSES,
-  DEFAULT_TRACK_EVENT_CAUSES,
   INCIDENT_SEVERITIES,
   INCIDENT_SEVERITY_LABELS,
   INCIDENT_STATUSES,
   INCIDENT_STATUS_LABELS,
   INCIDENT_TYPES,
-  INCIDENT_TYPE_LABELS,
+  resolveCauseDefinitions,
 } from "../../config/incidentConfig";
 import { parseDurationMinutes } from "../../utils/incidentUtils";
 import { validateIncidentForm } from "../../services/sheetsApi";
@@ -23,7 +21,7 @@ const EMPTY_FORM = {
   endTime: "",
   domain: "",
   title: "",
-  type: "Outage",
+  type: "",
   cause: "",
   severity: "High",
   duration: "",
@@ -51,6 +49,10 @@ export default function IncidentModal({
   mode = "add",
   initialValues = null,
   domainOptions = [],
+  // Type and Cause options come from the Incident Config tab; the built-in
+  // lists are only the fallback for a workbook without that tab.
+  typeOptions = INCIDENT_TYPES,
+  causesByType = null,
   adminToken,
   onUnlock,
   onLock,
@@ -59,14 +61,36 @@ export default function IncidentModal({
 }) {
   const isEdit = mode === "edit";
   const unlocked = Boolean(adminToken);
+  const types = typeOptions.length ? typeOptions : INCIDENT_TYPES;
   const [tokenInput, setTokenInput] = useState("");
   const [form, setForm] = useState(() => ({
     ...EMPTY_FORM,
+    type: types[0]?.label || "",
     startDate: todayISO(),
     ...(initialValues || {}),
   }));
   const [errors, setErrors] = useState({});
   const panelRef = useRef(null);
+
+  // An event logged before a type was renamed in the config tab still has to be
+  // editable, so its own type is offered alongside the configured ones.
+  const typeChoices = useMemo(() => {
+    if (!form.type || types.some((t) => t.label === form.type)) return types;
+    return [...types, { id: `current-${form.type}`, label: form.type, planned: false }];
+  }, [types, form.type]);
+
+  const selectedType = useMemo(
+    () => typeChoices.find((t) => t.label === form.type) || null,
+    [typeChoices, form.type]
+  );
+  // Severity only means something for unplanned work — a release has no severity.
+  const severityApplies = !selectedType || !selectedType.planned;
+
+  const causeChoices = useMemo(() => {
+    const configured = causesByType?.[form.type] || resolveCauseDefinitions(null, form.type);
+    if (!form.cause || configured.some((c) => c.label === form.cause)) return configured;
+    return [...configured, { id: `current-${form.cause}`, label: form.cause, color: "#64748b" }];
+  }, [causesByType, form.type, form.cause]);
 
   useEffect(() => {
     panelRef.current?.focus();
@@ -77,23 +101,28 @@ export default function IncidentModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const update = useCallback((name, value) => {
-    setForm((prev) => {
-      const next = { ...prev, [name]: value };
-      // Reset cause (and severity for Track Event) when type changes
-      if (name === "type") {
-        next.cause = "";
-        if (value === "Track Event") next.severity = "";
-        else if (!next.severity) next.severity = "High";
-      }
-      return next;
-    });
-    setErrors((prev) => {
-      const next = { ...prev };
-      delete next[name];
-      return next;
-    });
-  }, []);
+  const update = useCallback(
+    (name, value) => {
+      setForm((prev) => {
+        const next = { ...prev, [name]: value };
+        // Each type has its own cause list, so a type change invalidates the
+        // current cause — and planned types carry no severity.
+        if (name === "type") {
+          next.cause = "";
+          const def = types.find((t) => t.label === value);
+          if (def?.planned) next.severity = "";
+          else if (!next.severity) next.severity = "High";
+        }
+        return next;
+      });
+      setErrors((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+    },
+    [types]
+  );
 
   const handleUnlock = useCallback(
     (e) => {
@@ -108,9 +137,12 @@ export default function IncidentModal({
     (e) => {
       e.preventDefault();
       const { errors: found, valid } = validateIncidentForm(form, {
-        validTypes: INCIDENT_TYPE_LABELS,
+        validTypes: typeChoices.map((t) => t.label),
+        validCauses: causeChoices.map((c) => c.label),
+        requireCause: causeChoices.length > 0,
         validSeverities: INCIDENT_SEVERITY_LABELS,
         validStatuses: INCIDENT_STATUS_LABELS,
+        requireSeverity: severityApplies,
         parseDuration: parseDurationMinutes,
       });
       if (!valid) {
@@ -132,7 +164,7 @@ export default function IncidentModal({
         title: form.title.trim(),
         type: form.type,
         cause: form.cause,
-        severity: form.type === "Outage" ? form.severity : "",
+        severity: severityApplies ? form.severity : "",
         // With an end timestamp the duration is derived, so the column is left
         // blank rather than storing a value that could drift out of agreement.
         duration: ongoing || form.endDate ? "" : form.duration.trim(),
@@ -144,7 +176,7 @@ export default function IncidentModal({
       });
       onClose();
     },
-    [form, onSave, onClose]
+    [form, onSave, onClose, typeChoices, causeChoices, severityApplies]
   );
 
   const error = (name) =>
@@ -323,7 +355,7 @@ export default function IncidentModal({
                     value={form.type}
                     onChange={(e) => update("type", e.target.value)}
                   >
-                    {INCIDENT_TYPES.map((t) => (
+                    {typeChoices.map((t) => (
                       <option key={t.id} value={t.label}>
                         {t.label}
                       </option>
@@ -340,9 +372,14 @@ export default function IncidentModal({
                     className="admin-field__input"
                     value={form.cause}
                     onChange={(e) => update("cause", e.target.value)}
+                    disabled={causeChoices.length === 0}
                   >
-                    <option value="">— select cause —</option>
-                    {(form.type === "Track Event" ? DEFAULT_TRACK_EVENT_CAUSES : DEFAULT_OUTAGE_CAUSES).map((c) => (
+                    <option value="">
+                      {causeChoices.length === 0
+                        ? `— add a "${form.type} Cause" column in Incident Config —`
+                        : "— select cause —"}
+                    </option>
+                    {causeChoices.map((c) => (
                       <option key={c.id} value={c.label}>
                         {c.label}
                       </option>
@@ -352,7 +389,7 @@ export default function IncidentModal({
                 </label>
               </div>
 
-              {form.type === "Outage" && (
+              {severityApplies && (
                 <label className="admin-field">
                   <span className="admin-field__label">
                     Severity <span className="admin-field__req">*</span>

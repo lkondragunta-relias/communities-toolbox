@@ -3146,6 +3146,7 @@ html[data-theme="dark"] .ops-bar--tint {
   white-space: nowrap;
 }
 .ops-table__domain,
+.ops-table__cause,
 .ops-table__type { color: var(--text-muted); white-space: nowrap; }
 .ops-table__duration,
 .ops-table__money { white-space: nowrap; font-variant-numeric: tabular-nums; }

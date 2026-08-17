@@ -71,6 +71,22 @@ db.version(5)
     );
   });
 
+// v6 adds the incident `cause` column. Rows logged before it existed are
+// backfilled from the seed set so the local demo is not full of blanks.
+db.version(6).upgrade(async (tx) => {
+  const seedCauses = {};
+  SEED_INCIDENTS.forEach((row) => {
+    seedCauses[row.id] = row.cause || "";
+  });
+  const rows = await tx.table("incidents").toArray();
+  await Promise.all(
+    rows.map((row) => {
+      if (row.cause) return null;
+      return tx.table("incidents").put({ ...row, cause: seedCauses[row.id] || "" });
+    })
+  );
+});
+
 function projectKey(domain, id) {
   return `${String(domain).toLowerCase()}::${String(id)}`;
 }
@@ -118,59 +134,59 @@ const SEED_PRIORITIES = DEFAULT_PRIORITIES.map((p, i) => ({ ...p, order: i }));
 const SEED_INCIDENTS = [
   {
     id: "INC-0001", start: "2026-06-08 07:10", end: "2026-06-08 09:10", domain: "FreeCME", title: "SSO Failure",
-    type: "Outage", severity: "High", duration: "2h", customerImpact: "Users unable to log in",
+    type: "Outage", cause: "CDN / Akamai", severity: "High", duration: "2h", customerImpact: "Users unable to log in",
     revenueImpact: "$", status: "Resolved", notes: "Akamai security configuration blocked the IdP callback.",
     links: "Slack",
   },
   {
     id: "INC-0002", start: "2026-06-25 14:30", end: "2026-06-26 23:30", domain: "Relias Academy", title: "Session Expiry",
-    type: "Outage", severity: "Critical", duration: "33h", customerImpact: "Login & Checkout",
+    type: "Outage", cause: "Bot Attack", severity: "Critical", duration: "33h", customerImpact: "Login & Checkout",
     revenueImpact: "$48,000", status: "Resolved",
     notes: "Internal security scan during the Akamai migration. One whitelisted IP generated high-volume traffic.",
     links: "Incident Report / Slack",
   },
   {
     id: "INC-0003", start: "2026-06-29 09:00", end: "2026-06-29 13:00", domain: "Nurse", title: "Stripe Webhook Failure",
-    type: "Integration", severity: "High", duration: "4h", customerImpact: "Subscription payments failed",
+    type: "Integration", cause: "Application Failure", severity: "High", duration: "4h", customerImpact: "Subscription payments failed",
     revenueImpact: "$12,400", status: "Resolved", notes: "Missing Stripe headers after the Akamai migration.",
     links: "Ticket",
   },
   {
     id: "INC-0004", start: "2026-07-02 11:00", end: "2026-07-02 13:00", domain: "WCEI", title: "Events Missing",
-    type: "Outage", severity: "High", duration: "2h", customerImpact: "Live classes unavailable",
+    type: "Outage", cause: "CDN / Akamai", severity: "High", duration: "2h", customerImpact: "Live classes unavailable",
     revenueImpact: "$6,250", status: "Resolved", notes: "GET requests rejected by Akamai.",
     links: "Jira",
   },
   {
     id: "INC-0005", start: "2026-07-14 22:00", end: "2026-07-15 01:00", domain: "Relias Academy", title: "Akamai Migration — cutover",
-    type: "Migration", severity: "Low", duration: "3h", customerImpact: "No customer impact",
+    type: "Migration", cause: "Migration", severity: "Low", duration: "3h", customerImpact: "No customer impact",
     revenueImpact: "", status: "Resolved", notes: "Planned DNS cutover window.", links: "",
   },
   {
     id: "INC-0006", start: "2026-07-21 09:30", end: "2026-07-21 10:15", domain: "Nurse", title: "Checkout Slowdown",
-    type: "Degradation", severity: "Medium", duration: "45m", customerImpact: "Slow checkout for some users",
+    type: "Degradation", cause: "Infra Degradation", severity: "Medium", duration: "45m", customerImpact: "Slow checkout for some users",
     revenueImpact: "$1,260", status: "Resolved", notes: "Origin latency spike during a catalog reindex.",
     links: "",
   },
   {
     id: "INC-0007", start: "2026-08-01 21:00", end: "2026-08-01 21:30", domain: "Clinician", title: "Planned Maintenance",
-    type: "Maintenance", severity: "Low", duration: "30m", customerImpact: "Planned maintenance window",
+    type: "Maintenance", cause: "Scheduled Maintenance", severity: "Low", duration: "30m", customerImpact: "Planned maintenance window",
     revenueImpact: "", status: "Resolved", notes: "", links: "",
   },
   {
     id: "INC-0008", start: "2026-08-05 11:23", end: "2026-08-05 22:00", domain: "Relias Academy", title: "Rackspace Outage",
-    type: "Vendor Issue", severity: "Critical", duration: "10h 37m", customerImpact: "Site unavailable for users",
+    type: "Vendor Issue", cause: "Hosting Issue", severity: "Critical", duration: "10h 37m", customerImpact: "Site unavailable for users",
     revenueImpact: "$95,420", status: "Resolved", notes: "Upstream hosting provider incident.",
     links: "Incident Report",
   },
   {
     id: "INC-0009", start: "2026-08-07 15:00", end: "", domain: "RLP", title: "Release: RLP 3.2.1",
-    type: "Release", severity: "Low", duration: "15m", customerImpact: "No customer impact",
+    type: "Release", cause: "Release", severity: "Low", duration: "15m", customerImpact: "No customer impact",
     revenueImpact: "", status: "Resolved", notes: "", links: "",
   },
   {
     id: "INC-0010", start: "2026-08-10 08:15", end: "", domain: "Nurse", title: "Intermittent 502s",
-    type: "Degradation", severity: "Medium", duration: "", customerImpact: "Some users see errors on course pages",
+    type: "Degradation", cause: "Infra Degradation", severity: "Medium", duration: "", customerImpact: "Some users see errors on course pages",
     revenueImpact: "$$", status: "Monitoring", notes: "Watching origin error rate after the CDN rule change.",
     links: "",
   },
@@ -322,7 +338,7 @@ async function updateStatus(payload) {
 }
 
 const INCIDENT_FIELDS = [
-  "key", "start", "end", "domain", "title", "type", "severity", "duration",
+  "key", "start", "end", "domain", "title", "type", "cause", "severity", "duration",
   "customerImpact", "revenueImpact", "status", "notes", "links",
 ];
 

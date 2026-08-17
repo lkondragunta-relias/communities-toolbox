@@ -49,7 +49,8 @@ function Tooltip({ hover }) {
         <span className="ops-tip__title">{entry.title}</span>
       </div>
       <p className="ops-tip__meta">
-        {entry.domainLabel} · {entry.type.label} · {entry.severity.label}
+        {entry.domainLabel} · {entry.type.label}
+        {entry.cause ? ` · ${entry.cause}` : ""} · {entry.severity.label}
       </p>
       <p className="ops-tip__meta">
         {formatEventDate(entry)} ·{" "}

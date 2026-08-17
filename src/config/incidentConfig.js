@@ -3,6 +3,12 @@
  *
  * One row in the Incidents sheet = one operational event.
  * Two top-level types: Outage (affects uptime) and Track Event (context only).
+ *
+ * The lists below are only the fallback. The live vocabulary comes from the
+ * "Incident Config" tab (Section / Outage Cause / Track Event Cause columns),
+ * which the backend hands over as `data.incidentConfig` — see
+ * resolveIncidentVocabulary(). Editing that tab is how the Type and Cause
+ * dropdowns change; nothing here needs touching.
  */
 
 /** The two top-level event types. */
@@ -97,20 +103,134 @@ function findDefinition(list, value) {
 }
 
 /** Resolve a sheet Type value; maps legacy values to Outage/Track Event. */
-export function resolveIncidentType(value) {
+export function resolveIncidentType(value, typeDefs = INCIDENT_TYPES) {
+  const defs = typeDefs && typeDefs.length ? typeDefs : INCIDENT_TYPES;
   const raw = String(value || "").trim();
   const token = normalizeToken(raw);
 
-  // Direct match on new two-type model
-  const hit = findDefinition(INCIDENT_TYPES, raw);
+  // Direct match on the configured types
+  const hit = findDefinition(defs, raw);
   if (hit) return hit;
 
   // Legacy type mapping
   const mapped = LEGACY_TYPE_MAP[token];
-  if (mapped) return INCIDENT_TYPES.find((t) => t.label === mapped) || INCIDENT_TYPES[0];
+  if (mapped) return findDefinition(defs, mapped) || defs[0];
 
   // Unknown — treat as Outage (unplanned)
   return { id: token || "other", label: raw || "Other", color: UNKNOWN_COLOR, planned: false };
+}
+
+/* ------------------ Config-sheet driven Type / Cause lists ----------------- */
+
+/** Fallback colors for types and causes the code has never heard of. */
+const TYPE_PALETTE = ["#ef4444", "#3b82f6", "#a855f7", "#14b8a6", "#f97316"];
+const CAUSE_PALETTE = [
+  "#ef4444", "#f97316", "#eab308", "#22c55e", "#14b8a6",
+  "#3b82f6", "#6366f1", "#a855f7", "#ec4899", "#64748b",
+];
+
+const ALL_DEFAULT_CAUSES = [...DEFAULT_OUTAGE_CAUSES, ...DEFAULT_TRACK_EVENT_CAUSES];
+
+/** Config-tab values, trimmed and de-duplicated — a blank row is not an option. */
+function cleanList(values) {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set();
+  const out = [];
+  values.forEach((value) => {
+    const label = String(value ?? "").trim();
+    if (!label) return;
+    const token = normalizeToken(label);
+    if (!token || seen.has(token)) return;
+    seen.add(token);
+    out.push(label);
+  });
+  return out;
+}
+
+function slugOf(label, fallback) {
+  return normalizeToken(label).replace(/\s+/g, "-") || fallback;
+}
+
+/**
+ * The Type options, straight from the config tab's Section column. Types the
+ * app already knows keep their color and their planned/unplanned meaning; a
+ * type added in the sheet is drawn from the palette and counts as an incident.
+ */
+export function resolveIncidentTypeDefinitions(config) {
+  const configured = cleanList(config?.types);
+  const labels = configured.length ? configured : cleanList(config?.sections);
+  if (labels.length === 0) return INCIDENT_TYPES;
+
+  return labels.map((label, i) => {
+    const known = findDefinition(INCIDENT_TYPES, label);
+    if (known) return { ...known, label };
+    return {
+      id: slugOf(label, `type-${i + 1}`),
+      label,
+      color: TYPE_PALETTE[i % TYPE_PALETTE.length],
+      planned: false,
+    };
+  });
+}
+
+/**
+ * Cause options for one type. The config tab keeps one column per type
+ * ("Outage Cause", "Track Event Cause"), so a type added there brings its own
+ * cause list with it and nothing here has to change.
+ */
+export function resolveCauseDefinitions(config, typeLabel) {
+  const token = normalizeToken(typeLabel);
+  const byType = config?.causesByType || {};
+  const fromSheet = cleanList(
+    byType[token] ||
+      byType[String(typeLabel || "").trim()] ||
+      (token === "outage" ? config?.outageCauses : null) ||
+      (token === "track event" ? config?.trackEventCauses : null)
+  );
+
+  const fallback =
+    token === "track event"
+      ? DEFAULT_TRACK_EVENT_CAUSES
+      : token === "outage"
+        ? DEFAULT_OUTAGE_CAUSES
+        : [];
+  const labels = fromSheet.length ? fromSheet : fallback.map((c) => c.label);
+
+  return labels.map((label, i) => {
+    const known = findDefinition(ALL_DEFAULT_CAUSES, label);
+    return {
+      id: known ? known.id : slugOf(label, `cause-${i + 1}`),
+      label,
+      color: known ? known.color : CAUSE_PALETTE[i % CAUSE_PALETTE.length],
+    };
+  });
+}
+
+/**
+ * Everything the Operations view needs to render Type and Cause: the type list
+ * plus, for each type, its own cause list — both sourced from the config tab.
+ */
+export function resolveIncidentVocabulary(config) {
+  const types = resolveIncidentTypeDefinitions(config);
+  const causesByType = {};
+  types.forEach((type) => {
+    causesByType[type.label] = resolveCauseDefinitions(config, type.label);
+  });
+  return {
+    types,
+    typeLabels: types.map((t) => t.label),
+    causesByType,
+  };
+}
+
+/** Legend for a config-driven type list: severities plus every planned type. */
+export function buildTimelineLegend(types = INCIDENT_TYPES) {
+  return [
+    ...INCIDENT_SEVERITIES.map((s) => ({ key: `sev-${s.id}`, label: s.label, color: s.color })),
+    ...types
+      .filter((t) => t.planned)
+      .map((t) => ({ key: `type-${t.id}`, label: t.label, color: t.color, planned: true })),
+  ];
 }
 
 /** Resolve a sheet Severity value; blank/unknown sorts below Low. */
@@ -137,14 +257,8 @@ export function getEventColor(type, severity) {
   return severity?.color || type?.color || UNKNOWN_COLOR;
 }
 
-/** Legend shown under the timeline. */
-export const TIMELINE_LEGEND = [
-  ...INCIDENT_SEVERITIES.map((s) => ({ key: `sev-${s.id}`, label: s.label, color: s.color })),
-  { key: "type-track-event", label: "Track Event", color: "#3b82f6", planned: true },
-];
-
-export const INCIDENT_TYPE_LABELS = INCIDENT_TYPES.map((t) => t.label);
+// Type and cause label lists are no longer constants — they come from the
+// config tab via resolveIncidentVocabulary(), and the legend from
+// buildTimelineLegend() above.
 export const INCIDENT_SEVERITY_LABELS = INCIDENT_SEVERITIES.map((s) => s.label);
 export const INCIDENT_STATUS_LABELS = INCIDENT_STATUSES.map((s) => s.label);
-export const DEFAULT_OUTAGE_CAUSE_LABELS = DEFAULT_OUTAGE_CAUSES.map((c) => c.label);
-export const DEFAULT_TRACK_EVENT_CAUSE_LABELS = DEFAULT_TRACK_EVENT_CAUSES.map((c) => c.label);

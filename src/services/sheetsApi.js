@@ -375,8 +375,13 @@ export async function deleteIncident({ adminToken, id }) {
 export function validateIncidentForm(fields, options = {}) {
   const {
     validTypes = [],
+    validCauses = [],
     validSeverities = [],
     validStatuses = [],
+    // Both default to the built-in two-type model so an older caller that
+    // passes neither behaves exactly as before.
+    requireCause = true,
+    requireSeverity = String(fields.type || "").trim() === "Outage",
     parseDuration = null,
   } = options;
   const errors = {};
@@ -418,10 +423,10 @@ export function validateIncidentForm(fields, options = {}) {
     else if (list.length && !list.includes(v)) errors[key] = `${name} must be one of: ${list.join(", ")}.`;
   };
   check(fields.type, validTypes, "type", "Type");
-  // Cause is always required regardless of type
-  if (!String(fields.cause || "").trim()) errors.cause = "Cause is required.";
-  // Severity is only required for Outage
-  if (String(fields.type || "").trim() === "Outage") {
+  // Cause is required whenever the config tab offers causes for the type.
+  if (requireCause) check(fields.cause, validCauses, "cause", "Cause");
+  // Severity only applies to unplanned work (Outage by default).
+  if (requireSeverity) {
     check(fields.severity, validSeverities, "severity", "Severity");
   }
   check(fields.status, validStatuses, "status", "Status");

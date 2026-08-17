@@ -77,6 +77,7 @@ export default function IncidentDetail({ entry, canEdit, onEdit, onDelete, onClo
                   <span className="detail__note"> from start/end</span>
                 ) : null}
               </Field>
+              <Field label="Cause">{entry.cause || "—"}</Field>
               <Field label="Customer impact">{entry.customerImpact || "—"}</Field>
               <Field label="Revenue impact">{formatRevenue(entry.revenue)}</Field>
               <div className="detail__field detail__field--block">

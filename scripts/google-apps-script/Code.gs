@@ -14,10 +14,16 @@
  *   Domains    : Title(=id) | Name
  *   Statuses   : Title(=label) | Color | SortOrder
  *   Priorities : Title(=label) | Color | SortOrder
- *   Incidents  : ID | Key | Start | End | Domain | Title | Type | Severity | Duration |
- *                Customer Impact | Revenue Impact | Status | Notes | Links
- *   Incident Config : Section | Outage Cause | Track Event Cause | Domain |
+ *   Incidents  : ID | Key | Start | End | Domain | Title | Type | Cause |
+ *                Severity | Duration | Customer Impact | Revenue Impact |
+ *                Status | Notes | Links
+ *   Incident Config : Type | Outage Cause | Track Event Cause | Domain |
  *                     Severity | Status | Revenue Impact | Customer Impact Prefix
+ *
+ * The Incidents tab's Type and Cause dropdowns are driven by that config tab:
+ * Type comes from its Type column (the header "Section" is still accepted), and
+ * each type's causes come from the matching "<Type> Cause" column — so adding a
+ * type there plus a cause column for it needs no change here.
  *
  * The browser app reads GET (returns the flat JSON below) and writes via POST
  * with { action, adminToken, ... }. Column order is flexible — columns are
@@ -609,26 +615,32 @@ function deletePriority_(body) {
 
 var INCIDENT_CONFIG_SHEET_NAME = 'Incident Config';
 var INCIDENT_CONFIG_COLUMN_DEFS = [
-  { key: 'sections', header: 'Section', values: ['Outage', 'Track Event'], width: 130 },
-  { key: 'outageCauses', header: 'Outage Cause', values: [
-    'CDN / Akamai', 'Application Failure', 'Database Failure', 'Hosting Issue',
-    'Third-Party Dependency', 'Bot Attack', 'Infrastructure Degradation', 'Other',
+  // The Type column drives the Incidents tab's Type dropdown. "Section" is the
+  // header this column shipped with, so it is still accepted.
+  { key: 'types', header: 'Type', aliases: ['type', 'types', 'section', 'sections', 'event type'],
+    values: ['Outage', 'Track Event'], width: 130 },
+  { key: 'outageCauses', header: 'Outage Cause', aliases: ['outage cause', 'outage causes'], values: [
+    'CDN / Akamai', 'Application Failure', 'Hosting Issue', 'Bot Attack',
+    'Infra Degradation', 'Other',
   ], width: 190 },
-  { key: 'trackEventCauses', header: 'Track Event Cause', values: [
-    'Release', 'Hotfix', 'Rollback', 'Infra Change', 'Scheduled Maintenance',
-    'Security Incident', 'Partial Degradation', 'Functional Issue', 'Migration', 'Other',
+  { key: 'trackEventCauses', header: 'Track Event Cause', aliases: ['track event cause', 'track event causes'], values: [
+    'Release', 'Hotfix', 'Infra Change', 'Scheduled Maintenance', 'Security Incident',
+    'Partial Degradation', 'Functional Issue', 'Migration', 'Other',
   ], width: 190 },
-  { key: 'domains', header: 'Domain', values: [
+  { key: 'domains', header: 'Domain', aliases: ['domain', 'domains', 'system'], values: [
     'Relias Academy', 'Nurse.com', 'Relias Academy LMS', 'Relias Platform',
     'Relias Media', 'Multiple', 'Infrastructure',
   ], width: 170 },
-  { key: 'severities', header: 'Severity', values: ['Critical', 'High', 'Medium', 'Low'], width: 110 },
-  { key: 'statuses', header: 'Status', values: ['Active', 'Monitoring', 'Resolved'], width: 120 },
-  { key: 'revenueImpacts', header: 'Revenue Impact', values: ['$', '$$', '$$$'], width: 140 },
-  { key: 'customerImpactPrefixes', header: 'Customer Impact Prefix', values: [
+  { key: 'severities', header: 'Severity', aliases: ['severity', 'severities'], values: ['Critical', 'High', 'Medium', 'Low'], width: 110 },
+  { key: 'statuses', header: 'Status', aliases: ['status', 'statuses'], values: ['Active', 'Monitoring', 'Resolved'], width: 120 },
+  { key: 'revenueImpacts', header: 'Revenue Impact', aliases: ['revenue impact', 'revenue'], values: ['$', '$$', '$$$'], width: 140 },
+  { key: 'customerImpactPrefixes', header: 'Customer Impact Prefix', aliases: ['customer impact prefix', 'customer impact'], values: [
     'None', 'Minor', 'Partial', 'Full',
   ], width: 190 },
 ];
+
+/** Every "<Type> Cause" column belongs to the type named in front of "Cause". */
+var INCIDENT_CAUSE_HEADER_RE = /^(.+?)\s+causes?$/;
 
 function getIncidentConfigSheet_() {
   var sheets = ss_().getSheets();
@@ -639,42 +651,94 @@ function getIncidentConfigSheet_() {
   return null;
 }
 
-function incidentConfigColumn_(def) {
+/**
+ * Column number for each config key, matched by header name so the tab can be
+ * reordered or given extra columns. A tab with no header row at all falls back
+ * to the canonical order, which is how the sheet is seeded.
+ */
+function incidentConfigColumns_(sheet) {
+  var map = sheet ? headerMap_(sheet) : {};
+  var hasHeaders = false;
+  for (var name in map) { if (map.hasOwnProperty(name)) { hasHeaders = true; break; } }
+
+  var cols = {};
   for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
-    if (INCIDENT_CONFIG_COLUMN_DEFS[i].key === def.key) return i + 1;
+    var def = INCIDENT_CONFIG_COLUMN_DEFS[i];
+    cols[def.key] = hasHeaders ? colOf_(map, def.aliases) : i + 1;
   }
-  return 0;
+  return cols;
+}
+
+/** Read one config column top-down; the first blank cell ends the list. */
+function readIncidentConfigColumn_(sheet, col) {
+  var values = [];
+  var maxRow = sheet.getMaxRows();
+  if (col < 1 || maxRow < 2) return values;
+  // Bulk range reads are unsupported when Google Sheets assigns table column
+  // types. Single-cell reads work for both typed tables and plain ranges.
+  for (var row = 2; row <= maxRow; row++) {
+    var value = String(sheet.getRange(row, col).getValue() || '').trim();
+    if (!value) break;
+    values.push(value);
+  }
+  return values;
 }
 
 function defaultIncidentConfig_() {
-  var out = {};
+  var out = { causesByType: {} };
   for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
     var def = INCIDENT_CONFIG_COLUMN_DEFS[i];
     out[def.key] = def.values.slice();
+    var causeOf = INCIDENT_CAUSE_HEADER_RE.exec(normalize_(def.header));
+    if (causeOf) out.causesByType[causeOf[1]] = def.values.slice();
   }
+  out.sections = out.types.slice(); // legacy field name, kept for older clients
   return out;
 }
 
+/**
+ * The Incidents tab's vocabulary, as typed in the config tab. Alongside the
+ * named lists it returns `causesByType` — every "<Type> Cause" column keyed by
+ * its type — so adding a type plus its cause column needs no code change.
+ */
 function readIncidentConfig_() {
   var sheet = getIncidentConfigSheet_();
   if (!sheet) return defaultIncidentConfig_();
 
-  var out = {};
-  // Bulk range reads are unsupported when Google Sheets assigns table column
-  // types. Single-cell reads work for both typed tables and plain ranges.
-  var maxRow = sheet.getMaxRows();
+  var out = { causesByType: {} };
+  var cols = incidentConfigColumns_(sheet);
   for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
     var def = INCIDENT_CONFIG_COLUMN_DEFS[i];
-    var col = incidentConfigColumn_(def);
-    var values = [];
-    if (col > 0 && maxRow >= 2) {
-      for (var row = 2; row <= maxRow; row++) {
-        var value = String(sheet.getRange(row, col).getValue() || '').trim();
-        if (!value) break;
-        values.push(value);
-      }
+    out[def.key] = readIncidentConfigColumn_(sheet, cols[def.key]);
+  }
+  out.sections = out.types.slice();
+
+  // Cause columns are discovered from the headers, not from the defs, so a
+  // "Maintenance Cause" column added by hand is picked up as well.
+  var map = headerMap_(sheet);
+  for (var header in map) {
+    if (!map.hasOwnProperty(header)) continue;
+    var causeOf = INCIDENT_CAUSE_HEADER_RE.exec(header);
+    if (!causeOf) continue;
+    out.causesByType[causeOf[1]] = readIncidentConfigColumn_(sheet, map[header]);
+  }
+  return out;
+}
+
+/** Cause options for every configured type, flattened and de-duplicated. */
+function allIncidentCauses_(config) {
+  var seen = {};
+  var out = [];
+  var byType = (config && config.causesByType) || {};
+  for (var type in byType) {
+    if (!byType.hasOwnProperty(type)) continue;
+    var values = byType[type] || [];
+    for (var i = 0; i < values.length; i++) {
+      var token = normalize_(values[i]);
+      if (!token || seen[token]) continue;
+      seen[token] = true;
+      out.push(values[i]);
     }
-    out[def.key] = values;
   }
   return out;
 }
@@ -691,30 +755,64 @@ function ensureIncidentConfigSheet_() {
     seedDefaults = !String(sheet.getRange(1, 1).getValue() || '').trim();
   }
 
-  ensureColumnCount_(sheet, INCIDENT_CONFIG_COLUMN_DEFS.length);
+  // Columns already present keep their own header ("Section" stays "Section");
+  // only the ones the tab is missing are appended on the right.
+  var cols = seedDefaults ? {} : incidentConfigColumns_(sheet);
+  var nextCol = seedDefaults ? 0 : sheet.getLastColumn();
   for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
     var def = INCIDENT_CONFIG_COLUMN_DEFS[i];
-    var col = i + 1;
-    sheet.getRange(1, col).setValue(def.header);
-    sheet.setColumnWidth(col, def.width);
-
-    if (seedDefaults) {
+    var col = cols[def.key] || 0;
+    if (col < 1) {
+      col = seedDefaults ? i + 1 : ++nextCol;
+      ensureColumnCount_(sheet, col);
+      sheet.getRange(1, col).setValue(def.header);
       var values = def.values.map(function (value) { return [value]; });
-      sheet.getRange(2, col, values.length, 1).setValues(values);
+      if (values.length) sheet.getRange(2, col, values.length, 1).setValues(values);
     }
+    sheet.setColumnWidth(col, def.width);
   }
 
-  styleIncidentHeaders_(sheet, INCIDENT_CONFIG_COLUMN_DEFS.length);
+  styleIncidentHeaders_(sheet, sheet.getLastColumn());
   return sheet;
+}
+
+/**
+ * Give every type in the Type column a cause column of its own. Typing a new
+ * type into that column and re-running the setup is all it takes to get a
+ * "<Type> Cause" column to fill in — which is what makes this tab the settings
+ * screen for the app's Type and Cause dropdowns. Headers only: the options
+ * underneath are yours to write.
+ */
+function ensureCauseColumnsForTypes_(sheet) {
+  var cols = incidentConfigColumns_(sheet);
+  var types = readIncidentConfigColumn_(sheet, cols.types);
+  var map = headerMap_(sheet);
+  var added = [];
+
+  for (var i = 0; i < types.length; i++) {
+    var header = types[i] + ' Cause';
+    if (map[normalize_(header)]) continue;
+    var col = sheet.getLastColumn() + 1;
+    ensureColumnCount_(sheet, col);
+    sheet.getRange(1, col).setValue(header);
+    sheet.setColumnWidth(col, 190);
+    map[normalize_(header)] = col;
+    added.push(header);
+  }
+
+  if (added.length) styleIncidentHeaders_(sheet, sheet.getLastColumn());
+  return added;
 }
 
 function setupIncidentConfig_() {
   var configSheet = ensureIncidentConfigSheet_();
+  var addedCauseColumns = ensureCauseColumnsForTypes_(configSheet);
   var incidentSheet = getIncidentSheet_();
   if (incidentSheet) applyIncidentValidation_(incidentSheet, null);
   return {
     ok: true,
     sheet: configSheet.getName(),
+    addedCauseColumns: addedCauseColumns,
     incidentConfig: readIncidentConfig_(),
   };
 }
@@ -722,15 +820,21 @@ function setupIncidentConfig_() {
 /** Run from the spreadsheet menu when setting up the workbook by hand. */
 function setupIncidentConfigSheet() {
   var result = setupIncidentConfig_();
-  return 'Incident Config tab ready: "' + result.sheet + '"';
+  var message = 'Incident Config tab ready: "' + result.sheet + '"';
+  if (result.addedCauseColumns.length) {
+    message += ' — added ' + result.addedCauseColumns.join(', ') +
+      '. Type the cause options under each new header.';
+  }
+  ss_().toast(message, 'Communities Toolbox', 10);
+  return message;
 }
 
 /* ==================== Incidents (Operations Timeline) ==================== */
 /*
  * Tab name must contain "incident". Headers (row 1, order flexible):
  *
- *   ID | Date | Domain | Title | Type | Severity | Duration |
- *   Customer Impact | Revenue Impact | Status | Notes | Links
+ *   ID | Key | Start | End | Domain | Title | Type | Cause | Severity |
+ *   Duration | Customer Impact | Revenue Impact | Status | Notes | Links
  *
  * Nothing here needs to be set up by hand. The first save creates the tab if it
  * is missing, and adds any header the tab does not have yet (see
@@ -770,19 +874,22 @@ var INCIDENT_COLUMN_DEFS = [
   { key: 'links', header: 'Links', aliases: ['links', 'link', 'references'], width: 220 },
 ];
 
-/** Dropdown values written as data validation when a column is created. */
-var INCIDENT_CHOICES = {
-  type: ['Outage', 'Track Event'],
-  cause: [
-    // Outage causes
-    'CDN / Akamai', 'Application Failure', 'Hosting Issue', 'Bot Attack', 'Infra Degradation', 'Other',
-    // Track Event causes
-    'Release', 'Hotfix', 'Infra Change', 'Scheduled Maintenance',
-    'Security Incident', 'Partial Degradation', 'Functional Issue', 'Migration'
-  ],
-  severity: ['Critical', 'High', 'Medium', 'Low'],
-  status: ['Active', 'Monitoring', 'Resolved'],
-};
+/**
+ * Dropdown values written as data validation when a column is created — all of
+ * them taken from the Incident Config tab (or its defaults when there is none).
+ *
+ * Cause gets every type's causes in one list: a sheet cell has no idea what the
+ * Type cell next to it says, so the per-type narrowing only happens in the app.
+ */
+function incidentChoices_() {
+  var config = readIncidentConfig_();
+  return {
+    type: config.types || [],
+    cause: allIncidentCauses_(config),
+    severity: config.severities || [],
+    status: config.statuses || [],
+  };
+}
 
 function incidentHeaders_() {
   return INCIDENT_COLUMN_DEFS.map(function (def) { return def.header; });
@@ -892,52 +999,48 @@ function ensureColumnCount_(sheet, needed) {
 }
 
 /**
- * Apply legacy Type validation plus config-backed Domain, Severity, Status, and
- * Revenue Impact validation. Invalid values remain allowed so historical data
- * is not blocked when an option is retired from the config.
+ * Point the Incidents tab's dropdowns at the Incident Config tab. Type, Domain,
+ * Severity, Status and Revenue Impact are bound to the config column itself, so
+ * editing that tab updates the dropdown with nothing to re-run. Cause gets the
+ * flat list of every type's causes — a cell cannot see the Type beside it, so
+ * the per-type narrowing lives in the app. Invalid values stay allowed, so
+ * retiring an option never blocks historical rows.
  */
 function applyIncidentValidation_(sheet, onlyKeys) {
   var cols = incidentColumns_(sheet);
   var rows = sheet.getMaxRows() - 1;
   if (rows < 1) return;
+
+  var choices = incidentChoices_();
+  for (var key in choices) {
+    if (!choices.hasOwnProperty(key)) continue;
+    if (onlyKeys && onlyKeys.indexOf(key) < 0) continue;
+    var col = cols[key];
+    if (!col || col < 1 || !choices[key].length) continue;
+    var rule = SpreadsheetApp.newDataValidation()
+      .requireValueInList(choices[key], true)
+      .setAllowInvalid(true)
+      .build();
+    sheet.getRange(2, col, rows, 1).setDataValidation(rule);
+  }
+
   var configSheet = getIncidentConfigSheet_();
-  var configKeys = {
+  if (!configSheet || configSheet.getMaxRows() < 2) return;
+  var configCols = incidentConfigColumns_(configSheet);
+  var rangeBacked = {
+    type: 'types',
     domain: 'domains',
     severity: 'severities',
     status: 'statuses',
     revenueImpact: 'revenueImpacts',
   };
 
-  for (var key in INCIDENT_CHOICES) {
-    if (!INCIDENT_CHOICES.hasOwnProperty(key)) continue;
-    if (onlyKeys && onlyKeys.indexOf(key) < 0) continue;
-    var col = cols[key];
-    if (!col || col < 1) continue;
-    var rule = SpreadsheetApp.newDataValidation()
-      .requireValueInList(INCIDENT_CHOICES[key], true)
-      .setAllowInvalid(true)
-      .build();
-    sheet.getRange(2, col, rows, 1).setDataValidation(rule);
-  }
-
-  if (!configSheet) return;
-  for (var incidentKey in configKeys) {
-    if (!configKeys.hasOwnProperty(incidentKey)) continue;
+  for (var incidentKey in rangeBacked) {
+    if (!rangeBacked.hasOwnProperty(incidentKey)) continue;
     if (onlyKeys && onlyKeys.indexOf(incidentKey) < 0) continue;
     var incidentCol = cols[incidentKey];
-    if (!incidentCol || incidentCol < 1) continue;
-
-    var configKey = configKeys[incidentKey];
-    var configDef = null;
-    for (var i = 0; i < INCIDENT_CONFIG_COLUMN_DEFS.length; i++) {
-      if (INCIDENT_CONFIG_COLUMN_DEFS[i].key === configKey) {
-        configDef = INCIDENT_CONFIG_COLUMN_DEFS[i];
-        break;
-      }
-    }
-    if (!configDef) continue;
-    var configCol = incidentConfigColumn_(configDef);
-    if (!configCol || configCol < 1 || configSheet.getMaxRows() < 2) continue;
+    var configCol = configCols[rangeBacked[incidentKey]];
+    if (!incidentCol || incidentCol < 1 || !configCol || configCol < 1) continue;
 
     var configRange = configSheet.getRange(2, configCol, configSheet.getMaxRows() - 1, 1);
     var configRule = SpreadsheetApp.newDataValidation()
@@ -997,6 +1100,7 @@ function readIncidents_() {
       domain: String(cell_(row, c.domain) || '').trim(),
       title: title,
       type: String(cell_(row, c.type) || '').trim(),
+      cause: String(cell_(row, c.cause) || '').trim(),
       severity: String(cell_(row, c.severity) || '').trim(),
       duration: String(cell_(row, c.duration) || '').trim(),
       customerImpact: String(cell_(row, c.customerImpact) || '').trim(),
@@ -1018,6 +1122,7 @@ function incidentValues_(body) {
     domain: String(body.domain || '').trim(),
     title: String(body.title || '').trim(),
     type: String(body.type || '').trim(),
+    cause: String(body.cause || '').trim(),
     severity: String(body.severity || '').trim(),
     duration: String(body.duration || '').trim(),
     customerImpact: String(body.customerImpact || '').trim(),
@@ -1038,6 +1143,7 @@ function writeIncidentRow_(row, c, v) {
   setCol_(row, c.domain, v.domain);
   setCol_(row, c.title, v.title);
   setCol_(row, c.type, v.type);
+  setCol_(row, c.cause, v.cause);
   setCol_(row, c.severity, v.severity);
   setCol_(row, c.duration, v.duration);
   setCol_(row, c.customerImpact, v.customerImpact);
@@ -1175,7 +1281,7 @@ function resolveIncident_(body) {
   setCol_(row, c.end, "'" + end);
   setCol_(row, c.status, String(body.status || 'Resolved').trim());
   // Only overwrite the optional fields the caller actually sent.
-  ['severity', 'customerImpact', 'revenueImpact', 'notes', 'links'].forEach(function (field) {
+  ['cause', 'severity', 'customerImpact', 'revenueImpact', 'notes', 'links'].forEach(function (field) {
     var value = body[field];
     if (value !== undefined && value !== null && String(value).trim() !== '') {
       setCol_(row, c[field], String(value).trim());

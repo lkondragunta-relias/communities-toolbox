@@ -254,8 +254,8 @@ stays plain text; the dashboard does the parsing, coloring and math.
 script sets the spreadsheet up for you:
 
 - no tab whose name contains "incident" → it creates one called **Incidents**,
-  with the header row bolted down, sensible column widths, and Type / Severity /
-  Status dropdowns;
+  with the header row bolted down, sensible column widths, and Type / Cause /
+  Severity / Status dropdowns;
 - a tab exists but row 1 is empty → it writes the full header row;
 - a tab exists but is missing a column → it appends just that header on the
   right, leaving your own columns and existing rows untouched.
@@ -267,9 +267,9 @@ once from the Apps Script editor. Running it twice is a no-op.
 The tab it produces (any tab whose name **contains "incident"** works — e.g.
 `Incidents` or `Community Roadmap - Incidents`) has these headers in row 1:
 
-| A | B | C | D | E | F | G | H | I | J | K | L | M | N |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ID | Key | Start | End | Domain | Title | Type | Severity | Duration | Customer Impact | Revenue Impact | Status | Notes | Links |
+| A | B | C | D | E | F | G | H | I | J | K | L | M | N | O |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| ID | Key | Start | End | Domain | Title | Type | Cause | Severity | Duration | Customer Impact | Revenue Impact | Status | Notes | Links |
 
 Headers are matched **by name, not position**, so you can reorder them, and
 common alternatives are accepted rather than duplicated — a column called
@@ -285,8 +285,9 @@ common alternatives are accepted rather than duplicated — a column called
 | **End** | no | When it was over, same formats. **Fill this in and the duration is calculated for you** — no need to do the arithmetic. Leave blank for a still-open event, or if you would rather just record a duration. |
 | **Domain** | yes | Free text — `Relias Academy`, `Nurse`, `FreeCME`, `WCEI`, `RLP`… Each distinct value becomes a row on the timeline. |
 | **Title** | yes | Short name: "Session Expiry", "Stripe Webhook Failure". |
-| **Type** | yes | See dropdowns below. Drives whether the event counts as an incident. |
-| **Severity** | yes | Critical / High / Medium / Low. Drives the bar color. |
+| **Type** | yes | `Outage` or `Track Event`, taken from the **Incident Config** tab — see [Dropdown values](#dropdown-values). Drives whether the event counts as an incident. |
+| **Cause** | yes | Why it happened, from the cause list for the chosen Type (`CDN / Akamai`, `Release`, …). Also taken from the **Incident Config** tab. |
+| **Severity** | Outages | Critical / High / Medium / Low. Drives the bar color. Left blank on Track Events, which are colored by type instead. |
 | **Duration** | no | Only needed when **End** is blank: `33h`, `2h 30m`, `45m`, `1d 4h`, `1:30`, or a bare number (read as hours). If both are present, **Start + End wins** — two timestamps can't drift out of agreement the way a hand-typed duration can. Blank on a still-open event and the bar grows to right now. |
 | **Customer Impact** | no | Plain sentence: "Login & Checkout", "Live classes unavailable". |
 | **Revenue Impact** | no | Either a figure (`$48,000`) or a quick tier (`$`, `$$`, `$$$`, `$$$$`). Figures roll into the KPI card; tiers are counted separately. |
@@ -298,10 +299,10 @@ Example rows — the first two use Start + End, the third only has a duration,
 the fourth is still running:
 
 ```
-INC-0002 | 2026-06-25 14:30 | 2026-06-26 23:30 | Relias Academy | Session Expiry | Outage | Critical |     | Login & Checkout | $48,000 | Resolved | Security scan during Akamai migration | Incident Report / Slack
-INC-0003 | 2026-06-29 09:00 | 2026-06-29 13:00 | Nurse | Stripe Webhook Failure | Integration | High |     | Subscription payments failed | $12,400 | Resolved | Missing Stripe headers | Ticket
-INC-0006 | 2026-08-07 15:00 |                  | RLP   | Release: RLP 3.2.1     | Release     | Low  | 15m | No customer impact |         | Resolved |                       |
-INC-0007 | 2026-08-10 08:15 |                  | Nurse | Intermittent 502s      | Degradation | Med  |     | Errors on course pages | $$   | Monitoring | Still open          |
+INC-0002 | 2026-06-25 14:30 | 2026-06-26 23:30 | Relias Academy | Session Expiry | Outage | Bot Attack | Critical |     | Login & Checkout | $48,000 | Resolved | Security scan during Akamai migration | Incident Report / Slack
+INC-0003 | 2026-06-29 09:00 | 2026-06-29 13:00 | Nurse | Stripe Webhook Failure | Outage | Application Failure | High |     | Subscription payments failed | $12,400 | Resolved | Missing Stripe headers | Ticket
+INC-0006 | 2026-08-07 15:00 |                  | RLP   | Release: RLP 3.2.1     | Track Event | Release |      | 15m | No customer impact |         | Resolved |                       |
+INC-0007 | 2026-08-10 08:15 |                  | Nurse | Intermittent 502s      | Outage | Infra Degradation | Medium |  | Errors on course pages | $$   | Monitoring | Still open          |
 ```
 
 ### Start, End and Duration
@@ -346,7 +347,8 @@ column.
 POST { "action": "addIncident", "adminToken": "…",
        "key": "monitor-7781",
        "start": "2026-08-11 09:00", "domain": "Nurse", "title": "Checkout 500s",
-       "type": "Outage", "severity": "High", "status": "Active" }
+       "type": "Outage", "cause": "Application Failure",
+       "severity": "High", "status": "Active" }
 → { "ok": true, "id": "INC-0042", "key": "monitor-7781", "created": true }
 ```
 
@@ -386,22 +388,53 @@ matching is an error — the API will not pick a row at random.
 
 ### Dropdown values
 
-These are written into the sheet as data-validation dropdowns when the script
-creates the tab (invalid values warn rather than block, so a paste is never
-rejected). The app also matches loosely — case, spacing, emoji and Slack
-shortcodes are ignored, so a pasted `:red_circle: Critical` still resolves to
-**Critical**.
+**Every dropdown value lives in the `Incident Config` tab** — edit that tab and
+both the spreadsheet's dropdowns and the app's Add/Edit form follow, with no code
+change and no redeploy. One column per list, values from row 2 down, and the
+first blank cell ends a list:
 
-**Type** — `Outage`, `Degradation`, `Integration`, `Security`, `Vendor Issue`,
-`Release`, `Infrastructure Change`, `Migration`, `Maintenance`
+| Column | Feeds |
+|---|---|
+| **Type** | The Type dropdown. Ships as `Outage` and `Track Event`. (A tab created before this column was renamed calls it `Section`; that header is still read.) |
+| **Outage Cause** | The Cause dropdown *when Type is Outage* — `CDN / Akamai`, `Application Failure`, `Hosting Issue`, `Bot Attack`, `Infra Degradation`, `Other`. |
+| **Track Event Cause** | The Cause dropdown *when Type is Track Event* — `Release`, `Hotfix`, `Infra Change`, `Scheduled Maintenance`, `Security Incident`, `Partial Degradation`, `Functional Issue`, `Migration`, `Other`. |
+| **Domain**, **Severity**, **Status**, **Revenue Impact**, **Customer Impact Prefix** | The matching columns on the Incidents tab. |
 
-The last four are **planned work**: they show on the timeline but are excluded
-from incident counts, downtime and MTTR, and are drawn striped in their own
-color (blue release, purple change/migration, gray maintenance) so a low-severity
-release never reads as a green "all clear" incident.
+Cause is **dependent on Type**: choosing `Outage` in the Add event form offers
+the Outage Cause list, choosing `Track Event` offers the Track Event Cause list,
+and changing Type clears the Cause so a mismatched pair cannot be saved.
 
-**Severity** — `Critical`, `High`, `Medium`, `Low`
-**Status** — `Active`, `Monitoring`, `Resolved`
+The pairing is **by name**: a column called `<Type> Cause` holds the causes for
+the type of the same name. A type with no matching cause column has nothing to
+offer, so the app's Cause dropdown comes up empty for it — which is what to check
+first if a type's causes don't appear.
+
+**Adding a third type, without touching any code:**
+
+1. Type its name into the **Type** column — say `Maintenance`.
+2. Run **Communities Toolbox → Set up Incident Config tab**. It appends a
+   `Maintenance Cause` column for you and says so in a toast.
+3. Type the cause options down that new column.
+4. Reload the app. `Maintenance` is now in the Type dropdown, with its own causes
+   in Cause, its own row of filter pills, and its own dropdown in the sheet.
+
+That setup step only ever *adds* what is missing — existing headers (including a
+column still called `Section`) and existing values, even lists you deliberately
+emptied, are left exactly as they are. Running it twice does nothing.
+
+In the spreadsheet the values are written as data-validation dropdowns (invalid
+values warn rather than block, so a paste is never rejected). The Cause dropdown
+there lists every type's causes at once — a cell cannot see the Type beside it,
+so the per-type narrowing only happens in the app. The app also matches loosely:
+case, spacing, emoji and Slack shortcodes are ignored, so a pasted
+`:red_circle: Critical` still resolves to **Critical**.
+
+**Track Event is planned work**: those rows show on the timeline but are excluded
+from incident counts, downtime and MTTR, and are drawn striped in blue, so a
+release never reads as a green "all clear" incident. Older type values
+(`Degradation`, `Integration`, `Vendor Issue`, `Release`, `Migration`,
+`Maintenance`, …) are still understood and mapped onto `Outage` / `Track Event`,
+so historical rows keep working untouched.
 
 ### How the dashboard reads a row
 
@@ -420,14 +453,17 @@ release never reads as a green "all clear" incident.
   time, so February is narrower than March.
 - **‹ › / Today** — move the visible window. With a year selected, ‹ › steps
   through years.
-- **Filters** — Year, Domain, Type, free-text search, plus Severity and Status
-  toggles. The KPI cards follow the filters; the timeline follows the window.
+- **Filters** — Year, Domain, Type, free-text search (which includes Cause),
+  plus a row of cause toggles per type. Causes narrow within a type and add up
+  across types: picking `Bot Attack` under Outage and `Release` under Track Event
+  shows both. The KPI cards follow the filters; the timeline follows the window.
 - **Click any bar or table row** for the full detail drawer (impact, cause,
   revenue, links) and Edit / Delete.
-- **+ Add event** opens the one-minute form: date, domain, title, type, severity,
-  duration (with 15m/30m/1h/2h/4h/8h/24h quick-picks and a "still ongoing"
-  toggle), impact, revenue, status, notes, links. Saving writes one row to the
-  sheet and updates the dashboard immediately.
+- **+ Add event** opens the one-minute form: date, domain, title, type, cause
+  (the list follows the type), severity (Outages only), duration (with
+  15m/30m/1h/2h/4h/8h/24h quick-picks and a "still ongoing" toggle), impact,
+  revenue, status, notes, links. Saving writes one row to the sheet and updates
+  the dashboard immediately.
 - **Export CSV** downloads exactly what is on screen, in the sheet's own columns.
 
 Adding, editing and deleting events needs the admin token, same as the roadmap.

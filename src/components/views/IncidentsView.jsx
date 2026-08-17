@@ -5,10 +5,8 @@ import IncidentModal from "../incidents/IncidentModal";
 import Icon from "../Icon";
 import {
   INCIDENT_SEVERITIES,
-  INCIDENT_TYPES,
-  TIMELINE_LEGEND,
-  DEFAULT_OUTAGE_CAUSES,
-  DEFAULT_TRACK_EVENT_CAUSES,
+  buildTimelineLegend,
+  resolveIncidentVocabulary,
 } from "../../config/incidentConfig";
 import { addIncident, deleteIncident, updateIncident } from "../../services/sheetsApi";
 import { getDomainNameMap } from "../../utils/roadmapUtils";
@@ -158,6 +156,10 @@ export default function IncidentsView({
   const selectedId = onSelectId ? routeSelectedId : localSelectedId;
   const setSelectedId = onSelectId || setLocalSelectedId;
 
+  // Type and Cause vocabulary, straight from the Incident Config tab.
+  const vocabulary = useMemo(() => resolveIncidentVocabulary(data?.incidentConfig), [data]);
+  const legend = useMemo(() => buildTimelineLegend(vocabulary.types), [vocabulary]);
+
   const allEntries = useMemo(() => getIncidents(data, nowMs), [data, nowMs]);
   const scoped = useMemo(() => filterIncidents(allEntries, filters), [allEntries, filters]);
   const stats = useMemo(() => computeIncidentStats(scoped, allEntries), [scoped, allEntries]);
@@ -213,6 +215,17 @@ export default function IncidentsView({
   // Every filter change also returns to the first page of results.
   const setFilter = useCallback((patch) => {
     setFilters((prev) => ({ ...prev, ...patch }));
+    setPage(1);
+  }, []);
+
+  /** Cause pills are kept per type, so one type's row never clears another's. */
+  const setCauseFilter = useCallback((typeLabel, selected) => {
+    setFilters((prev) => {
+      const next = { ...(prev.causes || {}) };
+      if (selected && selected.size > 0) next[typeLabel] = selected;
+      else delete next[typeLabel];
+      return { ...prev, causes: Object.keys(next).length ? next : null };
+    });
     setPage(1);
   }, []);
 
@@ -351,6 +364,7 @@ export default function IncidentsView({
         domain: entry.domain,
         title: entry.title,
         type: entry.type.label,
+        cause: entry.cause,
         severity: entry.severity.label,
         duration:
           entry.durationFromRange || entry.durationMinutes === null
@@ -492,7 +506,7 @@ export default function IncidentsView({
               }
             >
               <option value="">All types</option>
-              {INCIDENT_TYPES.map((t) => (
+              {vocabulary.types.map((t) => (
                 <option key={t.id} value={t.label}>
                   {t.label}
                 </option>
@@ -527,18 +541,19 @@ export default function IncidentsView({
           </button>
         </div>
 
-        <TogglePills
-          label="Outage"
-          options={DEFAULT_OUTAGE_CAUSES}
-          selected={filters.outageCauses}
-          onChange={(outageCauses) => setFilter({ outageCauses })}
-        />
-        <TogglePills
-          label="Track Event"
-          options={DEFAULT_TRACK_EVENT_CAUSES}
-          selected={filters.trackEventCauses}
-          onChange={(trackEventCauses) => setFilter({ trackEventCauses })}
-        />
+        {vocabulary.types.map((type) => {
+          const causes = vocabulary.causesByType[type.label] || [];
+          if (causes.length === 0) return null;
+          return (
+            <TogglePills
+              key={type.id}
+              label={type.label}
+              options={causes}
+              selected={filters.causes?.[type.label] || null}
+              onChange={(selected) => setCauseFilter(type.label, selected)}
+            />
+          );
+        })}
       </div>
 
       <section className="ops-panel">
@@ -621,7 +636,7 @@ export default function IncidentsView({
 
         <div className="ops-legend-row">
           <ul className="ops-legend">
-            {TIMELINE_LEGEND.map((item) => (
+            {legend.map((item) => (
               <li key={item.key}>
                 <span
                   className={`ops-legend__swatch${item.planned ? " is-planned" : ""}`}
@@ -662,6 +677,7 @@ export default function IncidentsView({
                   <th>Title</th>
                   <th>Domain / system</th>
                   <th>Type</th>
+                  <th>Cause</th>
                   <th>Impact</th>
                   <th>Duration</th>
                   <th>Status</th>
@@ -692,6 +708,7 @@ export default function IncidentsView({
                     </td>
                     <td className="ops-table__domain">{entry.domainLabel}</td>
                     <td className="ops-table__type">{entry.type.label}</td>
+                    <td className="ops-table__cause">{entry.cause || "—"}</td>
                     <td>
                       <span
                         className="ops-tag ops-tag--soft"
@@ -823,6 +840,8 @@ export default function IncidentsView({
           mode={modal.mode}
           initialValues={modal.values}
           domainOptions={domainSuggestions}
+          typeOptions={vocabulary.types}
+          causesByType={vocabulary.causesByType}
           adminToken={adminToken}
           onUnlock={onUnlock}
           onLock={onLock}

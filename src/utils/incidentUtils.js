@@ -11,6 +11,7 @@ import {
   resolveIncidentSeverity,
   resolveIncidentStatus,
   resolveIncidentType,
+  resolveIncidentTypeDefinitions,
 } from "../config/incidentConfig";
 import { getDomainNameMap } from "./roadmapUtils";
 
@@ -219,14 +220,18 @@ export function domainKeyOf(value) {
  * One sheet row → everything the UI needs, already parsed and colored.
  * `nowMs` is passed in so a whole render pass shares one clock.
  */
-export function normalizeIncident(raw, index, { domainNames = {}, nowMs = Date.now() } = {}) {
+export function normalizeIncident(
+  raw,
+  index,
+  { domainNames = {}, nowMs = Date.now(), typeDefs = undefined } = {}
+) {
   // `Start` is authoritative; `Date` is the original single-column form and is
   // still accepted so existing sheet rows keep working untouched.
   const rawStart = raw.start ?? raw.date ?? "";
   const rawEnd = raw.end ?? "";
   const start = parseIncidentDate(rawStart);
   const end = parseIncidentDate(rawEnd);
-  const type = resolveIncidentType(raw.type);
+  const type = resolveIncidentType(raw.type, typeDefs);
   const severity = resolveIncidentSeverity(raw.severity);
   const status = resolveIncidentStatus(raw.status);
   const explicitDuration = parseDurationMinutes(raw.duration);
@@ -298,9 +303,12 @@ export function getIncidents(data, nowMs = Date.now()) {
     domainNames[domainKeyOf(id)] = name;
     domainNames[domainKeyOf(name)] = name;
   });
+  // Types come from the Incident Config tab, so a row's Type resolves against
+  // the same list the filters and the Add form offer.
+  const typeDefs = resolveIncidentTypeDefinitions(data?.incidentConfig);
 
   return rows
-    .map((row, i) => normalizeIncident(row, i, { domainNames, nowMs }))
+    .map((row, i) => normalizeIncident(row, i, { domainNames, nowMs, typeDefs }))
     .filter((row) => row.startMs !== null)
     .sort((a, b) => b.startMs - a.startMs);
 }
@@ -323,8 +331,9 @@ export const INITIAL_INCIDENT_FILTERS = {
   severities: null,
   types: null,
   statuses: null,
-  outageCauses: null,
-  trackEventCauses: null,
+  // { [type label]: Set<cause label> } — one entry per type that has a cause
+  // selected, so the pill rows stay in step with a config-driven type list.
+  causes: null,
   search: "",
 };
 
@@ -338,6 +347,24 @@ function matchesSet(set, value) {
   return !set || set.size === 0 || set.has(value);
 }
 
+/** Type labels that currently have at least one cause pill selected. */
+function selectedCauseTypes(causes) {
+  if (!causes) return [];
+  return Object.keys(causes).filter((label) => causes[label] && causes[label].size > 0);
+}
+
+/**
+ * Cause pills narrow within a type and union across types: picking "Bot Attack"
+ * under Outage and "Release" under Track Event shows both, rather than asking
+ * one event to be of two types at once.
+ */
+function matchesCauses(entry, causes) {
+  const active = selectedCauseTypes(causes);
+  if (active.length === 0) return true;
+  const set = causes[entry.type.label];
+  return Boolean(set && set.size > 0 && set.has(entry.cause));
+}
+
 export function filterIncidents(entries, filters) {
   const query = String(filters.search || "").trim().toLowerCase();
   return entries.filter((e) => {
@@ -348,16 +375,17 @@ export function filterIncidents(entries, filters) {
     if (!matchesSet(filters.severities, e.severity.label)) return false;
     if (!matchesSet(filters.types, e.type.label)) return false;
     if (!matchesSet(filters.statuses, e.status.label)) return false;
-    // Outage cause filter: only applies to Outage-type events
-    if (filters.outageCauses && filters.outageCauses.size > 0) {
-      if (e.type.label !== "Outage" || !filters.outageCauses.has(e.cause)) return false;
-    }
-    // Track Event cause filter: only applies to Track Event-type events
-    if (filters.trackEventCauses && filters.trackEventCauses.size > 0) {
-      if (e.type.label !== "Track Event" || !filters.trackEventCauses.has(e.cause)) return false;
-    }
+    if (!matchesCauses(e, filters.causes)) return false;
     if (query) {
-      const haystack = [e.title, e.domainLabel, e.customerImpact, e.notes, e.type.label, e.id]
+      const haystack = [
+        e.title,
+        e.domainLabel,
+        e.customerImpact,
+        e.notes,
+        e.type.label,
+        e.cause,
+        e.id,
+      ]
         .join(" ")
         .toLowerCase();
       if (!haystack.includes(query)) return false;
@@ -373,8 +401,7 @@ export function isIncidentFilterActive(filters) {
     (filters.severities && filters.severities.size > 0) ||
     (filters.types && filters.types.size > 0) ||
     (filters.statuses && filters.statuses.size > 0) ||
-    (filters.outageCauses && filters.outageCauses.size > 0) ||
-    (filters.trackEventCauses && filters.trackEventCauses.size > 0) ||
+    selectedCauseTypes(filters.causes).length > 0 ||
     Boolean(String(filters.search || "").trim())
   );
 }
@@ -731,6 +758,7 @@ const CSV_HEADERS = [
   "Domain",
   "Title",
   "Type",
+  "Cause",
   "Severity",
   "Duration",
   "Customer Impact",
@@ -757,6 +785,7 @@ export function incidentsToCsv(entries) {
         e.domain,
         e.title,
         e.type.label,
+        e.cause,
         e.severity.label,
         e.durationMinutes === null ? (e.ongoing ? "Ongoing" : "") : formatDuration(e.durationMinutes),
         e.customerImpact,
