@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  DEFAULT_OUTAGE_CAUSES,
+  DEFAULT_TRACK_EVENT_CAUSES,
   INCIDENT_SEVERITIES,
   INCIDENT_SEVERITY_LABELS,
   INCIDENT_STATUSES,
@@ -22,6 +24,7 @@ const EMPTY_FORM = {
   domain: "",
   title: "",
   type: "Outage",
+  cause: "",
   severity: "High",
   duration: "",
   ongoing: false,
@@ -75,7 +78,16 @@ export default function IncidentModal({
   }, [onClose]);
 
   const update = useCallback((name, value) => {
-    setForm((prev) => ({ ...prev, [name]: value }));
+    setForm((prev) => {
+      const next = { ...prev, [name]: value };
+      // Reset cause (and severity for Track Event) when type changes
+      if (name === "type") {
+        next.cause = "";
+        if (value === "Track Event") next.severity = "";
+        else if (!next.severity) next.severity = "High";
+      }
+      return next;
+    });
     setErrors((prev) => {
       const next = { ...prev };
       delete next[name];
@@ -119,7 +131,8 @@ export default function IncidentModal({
         domain: form.domain.trim(),
         title: form.title.trim(),
         type: form.type,
-        severity: form.severity,
+        cause: form.cause,
+        severity: form.type === "Outage" ? form.severity : "",
         // With an end timestamp the duration is derived, so the column is left
         // blank rather than storing a value that could drift out of agreement.
         duration: ongoing || form.endDate ? "" : form.duration.trim(),
@@ -321,6 +334,27 @@ export default function IncidentModal({
 
                 <label className="admin-field">
                   <span className="admin-field__label">
+                    Cause <span className="admin-field__req">*</span>
+                  </span>
+                  <select
+                    className="admin-field__input"
+                    value={form.cause}
+                    onChange={(e) => update("cause", e.target.value)}
+                  >
+                    <option value="">— select cause —</option>
+                    {(form.type === "Track Event" ? DEFAULT_TRACK_EVENT_CAUSES : DEFAULT_OUTAGE_CAUSES).map((c) => (
+                      <option key={c.id} value={c.label}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  {error("cause")}
+                </label>
+              </div>
+
+              {form.type === "Outage" && (
+                <label className="admin-field">
+                  <span className="admin-field__label">
                     Severity <span className="admin-field__req">*</span>
                   </span>
                   <select
@@ -336,7 +370,7 @@ export default function IncidentModal({
                   </select>
                   {error("severity")}
                 </label>
-              </div>
+              )}
 
               <div className="admin-field" hidden={Boolean(form.endDate)}>
                 <span className="admin-field__label">Duration</span>

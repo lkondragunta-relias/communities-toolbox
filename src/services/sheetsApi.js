@@ -107,6 +107,9 @@ export function normalizeRemotePayload(payload) {
   if (Array.isArray(payload.cookiebotSites)) out.cookiebotSites = payload.cookiebotSites;
   if (Array.isArray(payload.cookiebotReports)) out.cookiebotReports = payload.cookiebotReports;
   if (Array.isArray(payload.incidents)) out.incidents = payload.incidents;
+  if (payload.incidentConfig && typeof payload.incidentConfig === "object") {
+    out.incidentConfig = payload.incidentConfig;
+  }
 
   return out;
 }
@@ -309,7 +312,7 @@ export async function deleteCookiebotReport({ adminToken, site, fileName, upload
 
 /* ------------------ Operations timeline (Incidents tab) ------------------ */
 
-/** Only the 12 sheet columns travel to the backend — nothing derived. */
+/** Only the 13 sheet columns travel to the backend — nothing derived. */
 function incidentPayload(entry) {
   return {
     id: String(entry.id || "").trim(),
@@ -319,6 +322,7 @@ function incidentPayload(entry) {
     domain: String(entry.domain || "").trim(),
     title: String(entry.title || "").trim(),
     type: String(entry.type || "").trim(),
+    cause: String(entry.cause || "").trim(),
     severity: String(entry.severity || "").trim(),
     duration: String(entry.duration || "").trim(),
     customerImpact: String(entry.customerImpact || "").trim(),
@@ -414,7 +418,12 @@ export function validateIncidentForm(fields, options = {}) {
     else if (list.length && !list.includes(v)) errors[key] = `${name} must be one of: ${list.join(", ")}.`;
   };
   check(fields.type, validTypes, "type", "Type");
-  check(fields.severity, validSeverities, "severity", "Severity");
+  // Cause is always required regardless of type
+  if (!String(fields.cause || "").trim()) errors.cause = "Cause is required.";
+  // Severity is only required for Outage
+  if (String(fields.type || "").trim() === "Outage") {
+    check(fields.severity, validSeverities, "severity", "Severity");
+  }
   check(fields.status, validStatuses, "status", "Status");
 
   // Duration stays optional (blank = ongoing, or a point-in-time event), but a

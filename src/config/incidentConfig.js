@@ -1,27 +1,14 @@
 /**
  * Communities Operations Timeline — event vocabulary.
  *
- * One row in the Incidents sheet = one operational event: an outage, a
- * degradation, a release, a migration, planned maintenance, a vendor problem.
- * Everything the dashboard colors, filters, or counts is defined here so the
- * sheet stays plain text ("Outage", "Critical", "Resolved").
- *
- * Sheet values are matched loosely: case, spacing, emoji and Slack shortcodes
- * (":red_circle: Critical") are all stripped before matching, so a row pasted
- * from Teams still lands on the right color.
+ * One row in the Incidents sheet = one operational event.
+ * Two top-level types: Outage (affects uptime) and Track Event (context only).
  */
 
-/** Types that are planned/expected work — not incidents, no downtime counted. */
+/** The two top-level event types. */
 export const INCIDENT_TYPES = [
   { id: "outage", label: "Outage", color: "#ef4444", planned: false },
-  { id: "degradation", label: "Degradation", color: "#f59e0b", planned: false },
-  { id: "integration", label: "Integration", color: "#e11d48", planned: false },
-  { id: "security", label: "Security", color: "#c2410c", planned: false },
-  { id: "vendor-issue", label: "Vendor Issue", color: "#db2777", planned: false },
-  { id: "release", label: "Release", color: "#3b82f6", planned: true },
-  { id: "infrastructure-change", label: "Infrastructure Change", color: "#8b5cf6", planned: true },
-  { id: "migration", label: "Migration", color: "#a855f7", planned: true },
-  { id: "maintenance", label: "Maintenance", color: "#94a3b8", planned: true },
+  { id: "track-event", label: "Track Event", color: "#3b82f6", planned: true },
 ];
 
 export const INCIDENT_SEVERITIES = [
@@ -38,6 +25,51 @@ export const INCIDENT_STATUSES = [
 ];
 
 export const UNKNOWN_COLOR = "#64748b";
+
+export const DEFAULT_OUTAGE_CAUSES = [
+  { id: "cdn-akamai", label: "CDN / Akamai", color: "#ef4444" },
+  { id: "application-failure", label: "Application Failure", color: "#dc2626" },
+  { id: "hosting-issue", label: "Hosting Issue", color: "#f97316" },
+  { id: "bot-attack", label: "Bot Attack", color: "#c2410c" },
+  { id: "infra-degradation", label: "Infra Degradation", color: "#f59e0b" },
+  { id: "other-outage", label: "Other", color: "#64748b" },
+];
+
+export const DEFAULT_TRACK_EVENT_CAUSES = [
+  { id: "release", label: "Release", color: "#3b82f6" },
+  { id: "hotfix", label: "Hotfix", color: "#6366f1" },
+  { id: "infra-change", label: "Infra Change", color: "#a855f7" },
+  { id: "scheduled-maintenance", label: "Scheduled Maintenance", color: "#94a3b8" },
+  { id: "security-incident", label: "Security Incident", color: "#e11d48" },
+  { id: "partial-degradation", label: "Partial Degradation", color: "#f59e0b" },
+  { id: "functional-issue", label: "Functional Issue", color: "#22d3ee" },
+  { id: "migration", label: "Migration", color: "#10b981" },
+  { id: "other-track", label: "Other", color: "#64748b" },
+];
+
+/**
+ * Map legacy type values (pre-refactor) to the new two-type model.
+ * Called when reading existing sheet rows so old data keeps working.
+ */
+const LEGACY_TYPE_MAP = {
+  outage: "Outage",
+  degradation: "Outage",
+  integration: "Outage",
+  security: "Outage",
+  "vendor issue": "Outage",
+  "vendor-issue": "Outage",
+  "bot attack": "Outage",
+  release: "Track Event",
+  "infrastructure change": "Track Event",
+  "infrastructure-change": "Track Event",
+  "infra change": "Track Event",
+  migration: "Track Event",
+  maintenance: "Track Event",
+  "scheduled maintenance": "Track Event",
+  hotfix: "Track Event",
+  "track event": "Track Event",
+  "track-event": "Track Event",
+};
 
 /**
  * Drop emoji, Slack shortcodes and punctuation so "🔴 Critical",
@@ -56,7 +88,6 @@ function findDefinition(list, value) {
   if (!token) return null;
   return (
     list.find((d) => normalizeToken(d.id) === token || normalizeToken(d.label) === token) ||
-    // "Infra change" / "Infrastructure changes" — match on a leading word too.
     list.find((d) => {
       const label = normalizeToken(d.label);
       return label.startsWith(token) || token.startsWith(label);
@@ -65,12 +96,21 @@ function findDefinition(list, value) {
   );
 }
 
-/** Resolve a sheet Type value; unknown text is kept and treated as an incident. */
+/** Resolve a sheet Type value; maps legacy values to Outage/Track Event. */
 export function resolveIncidentType(value) {
-  const hit = findDefinition(INCIDENT_TYPES, value);
-  if (hit) return hit;
   const raw = String(value || "").trim();
-  return { id: normalizeToken(raw) || "other", label: raw || "Other", color: UNKNOWN_COLOR, planned: false };
+  const token = normalizeToken(raw);
+
+  // Direct match on new two-type model
+  const hit = findDefinition(INCIDENT_TYPES, raw);
+  if (hit) return hit;
+
+  // Legacy type mapping
+  const mapped = LEGACY_TYPE_MAP[token];
+  if (mapped) return INCIDENT_TYPES.find((t) => t.label === mapped) || INCIDENT_TYPES[0];
+
+  // Unknown — treat as Outage (unplanned)
+  return { id: token || "other", label: raw || "Other", color: UNKNOWN_COLOR, planned: false };
 }
 
 /** Resolve a sheet Severity value; blank/unknown sorts below Low. */
@@ -90,26 +130,21 @@ export function resolveIncidentStatus(value) {
 }
 
 /**
- * Bar color. Planned work (release / maintenance / infra change / migration)
- * is colored by its type so it never reads as a green "all clear" incident;
- * everything else is colored by severity, which is what leadership scans for.
+ * Bar color. Track Events (planned) colored by type; Outages colored by severity.
  */
 export function getEventColor(type, severity) {
   if (type?.planned) return type.color;
   return severity?.color || type?.color || UNKNOWN_COLOR;
 }
 
-/** Legend shown under the timeline: severities first, then planned types. */
+/** Legend shown under the timeline. */
 export const TIMELINE_LEGEND = [
   ...INCIDENT_SEVERITIES.map((s) => ({ key: `sev-${s.id}`, label: s.label, color: s.color })),
-  ...INCIDENT_TYPES.filter((t) => t.planned).map((t) => ({
-    key: `type-${t.id}`,
-    label: t.label,
-    color: t.color,
-    planned: true,
-  })),
+  { key: "type-track-event", label: "Track Event", color: "#3b82f6", planned: true },
 ];
 
 export const INCIDENT_TYPE_LABELS = INCIDENT_TYPES.map((t) => t.label);
 export const INCIDENT_SEVERITY_LABELS = INCIDENT_SEVERITIES.map((s) => s.label);
 export const INCIDENT_STATUS_LABELS = INCIDENT_STATUSES.map((s) => s.label);
+export const DEFAULT_OUTAGE_CAUSE_LABELS = DEFAULT_OUTAGE_CAUSES.map((c) => c.label);
+export const DEFAULT_TRACK_EVENT_CAUSE_LABELS = DEFAULT_TRACK_EVENT_CAUSES.map((c) => c.label);
