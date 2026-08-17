@@ -45,7 +45,7 @@ export default function SiteAccessGate({ children }) {
 
     if (candidate !== configuredToken) {
       clearStoredAdminTokens();
-      setError("Invalid admin token.");
+      setError("Invalid admin password.");
       return;
     }
 
@@ -59,13 +59,11 @@ export default function SiteAccessGate({ children }) {
       <form className="access-gate__panel" onSubmit={handleSubmit}>
         <div>
           <h1 className="access-gate__title">Community toolbox</h1>
-          <p className="access-gate__description">
-            Enter the admin token to continue. Access remains unlocked for this browser session.
-          </p>
+          <p className="access-gate__description">Enter the admin password to continue.</p>
         </div>
 
         <label className="admin-field">
-          <span className="admin-field__label">Admin token</span>
+          <span className="admin-field__label">Admin password</span>
           <input
             type="password"
             className="admin-field__input"
