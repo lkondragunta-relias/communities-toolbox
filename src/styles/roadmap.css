@@ -2718,6 +2718,16 @@ html, body, #root { height: 100%; }
 
 .ops__filter-row { display: flex; align-items: flex-end; gap: var(--sp-2); flex-wrap: wrap; }
 
+.ops__pills {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  background: var(--bg-elevated);
+}
+
 .ops-field { display: flex; flex-direction: column; gap: 5px; min-width: 156px; }
 .ops-field--grow { flex: 1 1 200px; }
 
@@ -2819,6 +2829,105 @@ html, body, #root { height: 100%; }
 .ops-panel__title { font-size: var(--t-title); font-weight: 600; }
 .ops-panel__sub { font-size: var(--t-meta); color: var(--text-muted); margin-top: 2px; }
 .ops-panel__controls { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+
+.ops-panel__link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font-size: var(--t-meta);
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ops-panel__link:hover { text-decoration: underline; }
+
+/* ---------- Analytics row: Gantt timeline + Outage Breakdown ---------- */
+.ops-analytics-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 450px;
+  gap: var(--sp-4);
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .ops-analytics-row { grid-template-columns: 1fr; }
+}
+
+.ops-breakdown__body {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+}
+
+.ops-breakdown__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+}
+.ops-breakdown__sub { display: flex; align-items: center; gap: 4px; margin: 2px 0 var(--sp-3); }
+.ops-breakdown__info { color: var(--text-muted); flex-shrink: 0; }
+.ops-breakdown__toggle { flex-wrap: nowrap; flex-shrink: 0; gap: 0; }
+.ops-breakdown__toggle .ops-toggle.is-on {
+  background: transparent;
+  border-color: var(--success);
+  color: var(--success);
+}
+.ops-breakdown__toggle .ops-toggle:not(.is-on) {
+  background: var(--surface);
+  border-color: var(--border-hover);
+  color: var(--text-muted);
+}
+.ops-breakdown__toggle .ops-toggle:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.ops-breakdown__toggle .ops-toggle:last-child {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  margin-left: -1px;
+}
+
+.ops-breakdown__ring { width: 168px; height: 168px; flex: 0 0 auto; }
+.ops-breakdown__center-value { font-size: 20px; font-weight: 600; fill: var(--text); font-family: inherit; }
+.ops-breakdown__center-label { font-size: 10px; fill: var(--text-muted); font-family: inherit; }
+.ops-breakdown__slice-label {
+  font-size: 13px;
+  font-weight: 600;
+  fill: #fff;
+  font-family: inherit;
+  pointer-events: none;
+}
+
+.ops-breakdown__legend {
+  flex: 1 1 160px;
+  min-width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.ops-breakdown__row { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--t-meta); }
+.ops-breakdown__dot { width: 8px; height: 8px; border-radius: 2px; flex: 0 0 auto; }
+.ops-breakdown__row-label { flex: 1 1 auto; color: var(--text); }
+.ops-breakdown__row-value { color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ops-breakdown__empty { padding: var(--sp-4) 0; }
+
+.ops-breakdown__tip {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
+  padding: var(--sp-3);
+  border-radius: var(--r-control);
+  background: rgb(168, 85, 247, .2);
+  border: 1px solid rgb(168, 85, 247, .35);
+}
+.ops-breakdown__tip-icon { color: rgb(168, 85, 247); flex-shrink: 0; margin-top: 1px; }
+.ops-breakdown__tip p { margin: 0; font-size: var(--t-meta); color: rgb(168, 85, 247); }
 
 .ops-empty { padding: var(--sp-6) var(--sp-2); text-align: center; color: var(--text-muted); font-size: var(--t-body); }
 .ops-empty__hint {
@@ -3036,29 +3145,12 @@ html, body, #root { height: 100%; }
 
 .ops-bar--solid { background: var(--bar-color); color: var(--bar-text, #fff); }
 
-.ops-bar--tint {
-  background: var(--bar-color);
-  background: color-mix(in srgb, var(--bar-color) 16%, var(--bg-elevated));
-  color: var(--text);
-}
-
-html[data-theme="dark"] .ops-bar--tint {
-  background: color-mix(in srgb, var(--bar-color) 30%, var(--bg-elevated));
-}
-
 .ops-bar:hover { filter: brightness(1.06); z-index: 2; }
 .ops-bar.is-selected { box-shadow: 0 0 0 2px var(--bg-elevated), 0 0 0 3px var(--text); z-index: 2; }
 .ops-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
 
 .ops-bar__title { overflow: hidden; text-overflow: ellipsis; }
 .ops-bar__dur { flex-shrink: 0; opacity: 0.7; font-variant-numeric: tabular-nums; }
-
-/* Planned work is scheduled, not an incident — hatched so it never reads as one. */
-.ops-bar--planned {
-  background-image: repeating-linear-gradient(
-    45deg, rgba(125, 125, 125, 0.16) 0 5px, transparent 5px 10px
-  );
-}
 
 /* Ongoing has no known end: the right edge is left open. */
 .ops-bar--ongoing {

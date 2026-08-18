@@ -29,6 +29,7 @@ const EMPTY_FORM = {
   customerImpact: "",
   revenueImpact: "",
   status: "Resolved",
+  countsAgainstUptime: true,
   notes: "",
   links: "",
 };
@@ -171,6 +172,9 @@ export default function IncidentModal({
         customerImpact: form.customerImpact.trim(),
         revenueImpact: form.revenueImpact.trim(),
         status,
+        // Meaningless for planned work — leave the column blank rather than a
+        // literal "Yes"/"No" that would only ever apply to Outage rows.
+        countsAgainstUptime: severityApplies ? (form.countsAgainstUptime ? "Yes" : "No") : "",
         notes: form.notes.trim(),
         links: form.links.trim(),
       });
@@ -407,6 +411,22 @@ export default function IncidentModal({
                   </select>
                   {error("severity")}
                 </label>
+              )}
+
+              {severityApplies && (
+                <div className="admin-field">
+                  <label className="ops-check">
+                    <input
+                      type="checkbox"
+                      checked={form.countsAgainstUptime}
+                      onChange={(e) => update("countsAgainstUptime", e.target.checked)}
+                    />
+                    <span>Counts against uptime</span>
+                  </label>
+                  <span className="admin-field__hint-inline">
+                    Unchecked excludes this outage from the Uptime% and MTTR calculations.
+                  </span>
+                </div>
               )}
 
               <div className="admin-field" hidden={Boolean(form.endDate)}>

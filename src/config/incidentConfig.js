@@ -22,10 +22,12 @@ export const INCIDENT_SEVERITIES = [
   { id: "high", label: "High", color: "#f97316", rank: 3 },
   { id: "medium", label: "Medium", color: "#eab308", rank: 2 },
   { id: "low", label: "Low", color: "#22c55e", rank: 1 },
+  { id: "informational", label: "Informational", color: "#94a3b8", rank: 0 },
 ];
 
 export const INCIDENT_STATUSES = [
   { id: "active", label: "Active", color: "#dc2626", open: true },
+  { id: "investigating", label: "Investigating", color: "#3b82f6", open: true },
   { id: "monitoring", label: "Monitoring", color: "#f59e0b", open: true },
   { id: "resolved", label: "Resolved", color: "#16a34a", open: false },
 ];
@@ -36,21 +38,41 @@ export const DEFAULT_OUTAGE_CAUSES = [
   { id: "cdn-akamai", label: "CDN / Akamai", color: "#ef4444" },
   { id: "application-failure", label: "Application Failure", color: "#dc2626" },
   { id: "hosting-issue", label: "Hosting Issue", color: "#f97316" },
+  { id: "database", label: "Database", color: "#14b8a6" },
+  { id: "third-party-dependency", label: "Third-Party Dependency", color: "#0ea5e9" },
   { id: "bot-attack", label: "Bot Attack", color: "#c2410c" },
-  { id: "infra-degradation", label: "Infra Degradation", color: "#f59e0b" },
+  { id: "network-issue", label: "Network Issue", color: "#6366f1" },
+  { id: "security-issue", label: "Security Issue", color: "#a855f7" },
+  { id: "server-degradation", label: "Server Degradation", color: "#ec4899" },
+  { id: "unknown", label: "Unknown", color: "#94a3b8" },
   { id: "other-outage", label: "Other", color: "#64748b" },
 ];
 
 export const DEFAULT_TRACK_EVENT_CAUSES = [
   { id: "release", label: "Release", color: "#3b82f6" },
   { id: "hotfix", label: "Hotfix", color: "#6366f1" },
+  { id: "rollback", label: "Rollback", color: "#eab308" },
   { id: "infra-change", label: "Infra Change", color: "#a855f7" },
   { id: "scheduled-maintenance", label: "Scheduled Maintenance", color: "#94a3b8" },
-  { id: "security-incident", label: "Security Incident", color: "#e11d48" },
-  { id: "partial-degradation", label: "Partial Degradation", color: "#f59e0b" },
-  { id: "functional-issue", label: "Functional Issue", color: "#22d3ee" },
   { id: "migration", label: "Migration", color: "#10b981" },
+  { id: "security-incident", label: "Security Incident", color: "#e11d48" },
+  { id: "functional-issue", label: "Functional Issue", color: "#22d3ee" },
+  { id: "partial-degradation", label: "Partial Degradation", color: "#f59e0b" },
+  { id: "capacity-change", label: "Capacity Change", color: "#0ea5e9" },
   { id: "other-track", label: "Other", color: "#64748b" },
+];
+
+/** Fallback domain list for a workbook with no Incident Config "Domain" column yet. */
+export const DEFAULT_DOMAINS = [
+  "Relias Academy",
+  "Nurse ECommerce & Edu",
+  "Nurse Home & Jobs",
+  "FreeCME",
+  "Clinician",
+  "WCEI",
+  "Academy Portals",
+  "RLP",
+  "RLMS",
 ];
 
 /**
@@ -204,6 +226,18 @@ export function resolveCauseDefinitions(config, typeLabel) {
       color: known ? known.color : CAUSE_PALETTE[i % CAUSE_PALETTE.length],
     };
   });
+}
+
+/**
+ * Domain/system options straight from the config tab's Domain column (falls
+ * back to the built-in list for a workbook without one). Kept separate from
+ * `getDomainNameMap` (roadmap projects' Domains sheet) — this is the
+ * Incidents-side vocabulary, which may include systems that have no roadmap
+ * projects at all.
+ */
+export function resolveIncidentDomainDefinitions(config) {
+  const configured = cleanList(config?.domains);
+  return configured.length ? configured : DEFAULT_DOMAINS.slice();
 }
 
 /**

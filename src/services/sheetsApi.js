@@ -312,7 +312,6 @@ export async function deleteCookiebotReport({ adminToken, site, fileName, upload
 
 /* ------------------ Operations timeline (Incidents tab) ------------------ */
 
-/** Only the 13 sheet columns travel to the backend — nothing derived. */
 function incidentPayload(entry) {
   return {
     id: String(entry.id || "").trim(),
@@ -328,6 +327,7 @@ function incidentPayload(entry) {
     customerImpact: String(entry.customerImpact || "").trim(),
     revenueImpact: String(entry.revenueImpact || "").trim(),
     status: String(entry.status || "").trim(),
+    countsAgainstUptime: String(entry.countsAgainstUptime || "").trim(),
     notes: String(entry.notes || "").trim(),
     links: String(entry.links || "").trim(),
   };

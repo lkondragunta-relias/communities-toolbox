@@ -130,64 +130,97 @@ const SEED_DOMAINS = [
 const SEED_STATUSES = DEFAULT_STATUSES.map((s, i) => ({ ...s, order: i }));
 const SEED_PRIORITIES = DEFAULT_PRIORITIES.map((p, i) => ({ ...p, order: i }));
 
-/** Sample operations events so the timeline has something to show locally. */
+/**
+ * Sample operations events so the timeline has something to show locally.
+ * Domains/causes match the vocabulary of the real "Incident Config" tab;
+ * the events themselves are invented for the demo, not copied from any real
+ * incident log.
+ */
 const SEED_INCIDENTS = [
   {
-    id: "INC-0001", start: "2026-06-08 07:10", end: "2026-06-08 09:10", domain: "FreeCME", title: "SSO Failure",
+    id: "INC-0001", start: "2026-06-08 07:10", end: "2026-06-08 09:10", domain: "FreeCME", title: "SSO login failures",
     type: "Outage", cause: "CDN / Akamai", severity: "High", duration: "2h", customerImpact: "Users unable to log in",
-    revenueImpact: "$", status: "Resolved", notes: "Akamai security configuration blocked the IdP callback.",
+    revenueImpact: "$", status: "Resolved", countsAgainstUptime: "Yes",
+    notes: "Edge security rule blocked the IdP callback after a config push.",
     links: "Slack",
   },
   {
-    id: "INC-0002", start: "2026-06-25 14:30", end: "2026-06-26 23:30", domain: "Relias Academy", title: "Session Expiry",
-    type: "Outage", cause: "Bot Attack", severity: "Critical", duration: "33h", customerImpact: "Login & Checkout",
-    revenueImpact: "$48,000", status: "Resolved",
-    notes: "Internal security scan during the Akamai migration. One whitelisted IP generated high-volume traffic.",
+    id: "INC-0002", start: "2026-06-25 14:30", end: "2026-06-26 23:30", domain: "Relias Academy", title: "Session expiry storm",
+    type: "Outage", cause: "Bot Attack", severity: "Critical", duration: "33h", customerImpact: "Login & checkout",
+    revenueImpact: "$48,000", status: "Resolved", countsAgainstUptime: "Yes",
+    notes: "A misbehaving crawler generated high-volume traffic that exhausted session capacity.",
     links: "Incident Report / Slack",
   },
   {
-    id: "INC-0003", start: "2026-06-29 09:00", end: "2026-06-29 13:00", domain: "Nurse", title: "Stripe Webhook Failure",
-    type: "Integration", cause: "Application Failure", severity: "High", duration: "4h", customerImpact: "Subscription payments failed",
-    revenueImpact: "$12,400", status: "Resolved", notes: "Missing Stripe headers after the Akamai migration.",
+    id: "INC-0003", start: "2026-06-29 09:00", end: "2026-06-29 13:00", domain: "Nurse ECommerce & Edu", title: "Payment webhook failures",
+    type: "Outage", cause: "Third-Party Dependency", severity: "High", duration: "4h", customerImpact: "Subscription payments failed",
+    revenueImpact: "$12,400", status: "Resolved", countsAgainstUptime: "Yes",
+    notes: "Payment processor changed a required header without notice.",
     links: "Ticket",
   },
   {
-    id: "INC-0004", start: "2026-07-02 11:00", end: "2026-07-02 13:00", domain: "WCEI", title: "Events Missing",
+    id: "INC-0004", start: "2026-07-02 11:00", end: "2026-07-02 13:00", domain: "WCEI", title: "Live class pages unreachable",
     type: "Outage", cause: "CDN / Akamai", severity: "High", duration: "2h", customerImpact: "Live classes unavailable",
-    revenueImpact: "$6,250", status: "Resolved", notes: "GET requests rejected by Akamai.",
+    revenueImpact: "$6,250", status: "Resolved", countsAgainstUptime: "Yes",
+    notes: "Edge rule rejected a class of GET requests.",
     links: "Jira",
   },
   {
-    id: "INC-0005", start: "2026-07-14 22:00", end: "2026-07-15 01:00", domain: "Relias Academy", title: "Akamai Migration — cutover",
-    type: "Migration", cause: "Migration", severity: "Low", duration: "3h", customerImpact: "No customer impact",
-    revenueImpact: "", status: "Resolved", notes: "Planned DNS cutover window.", links: "",
+    id: "EVT-0001", start: "2026-07-14 22:00", end: "2026-07-15 01:00", domain: "Relias Academy", title: "CDN migration — cutover",
+    type: "Track Event", cause: "Migration", severity: "", duration: "3h", customerImpact: "No customer impact",
+    revenueImpact: "", status: "Resolved", countsAgainstUptime: "",
+    notes: "Planned DNS cutover window.", links: "",
   },
   {
-    id: "INC-0006", start: "2026-07-21 09:30", end: "2026-07-21 10:15", domain: "Nurse", title: "Checkout Slowdown",
-    type: "Degradation", cause: "Infra Degradation", severity: "Medium", duration: "45m", customerImpact: "Slow checkout for some users",
-    revenueImpact: "$1,260", status: "Resolved", notes: "Origin latency spike during a catalog reindex.",
+    id: "INC-0005", start: "2026-07-21 09:30", end: "2026-07-21 10:15", domain: "Nurse Home & Jobs", title: "Checkout slowdown",
+    type: "Outage", cause: "Server Degradation", severity: "Medium", duration: "45m", customerImpact: "Slow checkout for some users",
+    revenueImpact: "$1,260", status: "Resolved", countsAgainstUptime: "Yes",
+    notes: "Origin latency spike during a catalog reindex.",
     links: "",
   },
   {
-    id: "INC-0007", start: "2026-08-01 21:00", end: "2026-08-01 21:30", domain: "Clinician", title: "Planned Maintenance",
-    type: "Maintenance", cause: "Scheduled Maintenance", severity: "Low", duration: "30m", customerImpact: "Planned maintenance window",
-    revenueImpact: "", status: "Resolved", notes: "", links: "",
+    id: "EVT-0002", start: "2026-08-01 21:00", end: "2026-08-01 21:30", domain: "Clinician", title: "Scheduled database maintenance",
+    type: "Track Event", cause: "Scheduled Maintenance", severity: "", duration: "30m", customerImpact: "Planned maintenance window",
+    revenueImpact: "", status: "Resolved", countsAgainstUptime: "",
+    notes: "", links: "",
   },
   {
-    id: "INC-0008", start: "2026-08-05 11:23", end: "2026-08-05 22:00", domain: "Relias Academy", title: "Rackspace Outage",
-    type: "Vendor Issue", cause: "Hosting Issue", severity: "Critical", duration: "10h 37m", customerImpact: "Site unavailable for users",
-    revenueImpact: "$95,420", status: "Resolved", notes: "Upstream hosting provider incident.",
+    id: "INC-0006", start: "2026-08-04 02:00", end: "2026-08-04 02:40", domain: "Academy Portals", title: "Security scan false-positive block",
+    type: "Outage", cause: "Security Issue", severity: "Medium", duration: "40m", customerImpact: "A handful of users saw a WAF challenge page",
+    revenueImpact: "", status: "Resolved", countsAgainstUptime: "No",
+    notes: "Scheduled internal penetration test tripped the WAF; excluded from the uptime SLA by agreement.",
+    links: "",
+  },
+  {
+    id: "INC-0007", start: "2026-08-05 11:23", end: "2026-08-05 22:00", domain: "Relias Academy", title: "Hosting provider outage",
+    type: "Outage", cause: "Hosting Issue", severity: "Critical", duration: "10h 37m", customerImpact: "Site unavailable for users",
+    revenueImpact: "$95,420", status: "Resolved", countsAgainstUptime: "Yes",
+    notes: "Upstream hosting provider incident affecting the primary data center.",
     links: "Incident Report",
   },
   {
-    id: "INC-0009", start: "2026-08-07 15:00", end: "", domain: "RLP", title: "Release: RLP 3.2.1",
-    type: "Release", cause: "Release", severity: "Low", duration: "15m", customerImpact: "No customer impact",
-    revenueImpact: "", status: "Resolved", notes: "", links: "",
+    id: "EVT-0003", start: "2026-08-07 15:00", end: "2026-08-07 15:15", domain: "RLP", title: "Release: RLP 3.2.1",
+    type: "Track Event", cause: "Release", severity: "", duration: "15m", customerImpact: "No customer impact",
+    revenueImpact: "", status: "Resolved", countsAgainstUptime: "",
+    notes: "", links: "",
   },
   {
-    id: "INC-0010", start: "2026-08-10 08:15", end: "", domain: "Nurse", title: "Intermittent 502s",
-    type: "Degradation", cause: "Infra Degradation", severity: "Medium", duration: "", customerImpact: "Some users see errors on course pages",
-    revenueImpact: "$$", status: "Monitoring", notes: "Watching origin error rate after the CDN rule change.",
+    id: "INC-0008", start: "2026-08-09 13:50", end: "2026-08-09 16:09", domain: "RLMS", title: "Intermittent query timeouts",
+    type: "Outage", cause: "Database", severity: "High", duration: "2h 19m", customerImpact: "Some pages failed to load",
+    revenueImpact: "$$", status: "Resolved", countsAgainstUptime: "Yes",
+    notes: "Connection pool exhaustion during a nightly reporting job overlap.",
+    links: "",
+  },
+  {
+    id: "EVT-0004", start: "2026-08-09 20:00", end: "2026-08-09 20:05", domain: "WCEI", title: "Hotfix: broken course thumbnails",
+    type: "Track Event", cause: "Hotfix", severity: "", duration: "5m", customerImpact: "Thumbnails missing on course cards",
+    revenueImpact: "", status: "Resolved", countsAgainstUptime: "", notes: "", links: "",
+  },
+  {
+    id: "INC-0009", start: "2026-08-10 08:15", end: "", domain: "Nurse ECommerce & Edu", title: "Intermittent 502s",
+    type: "Outage", cause: "Network Issue", severity: "Medium", duration: "", customerImpact: "Some users see errors on course pages",
+    revenueImpact: "$$", status: "Investigating", countsAgainstUptime: "Yes",
+    notes: "Watching origin error rate after a CDN rule change.",
     links: "",
   },
 ];
@@ -339,7 +372,7 @@ async function updateStatus(payload) {
 
 const INCIDENT_FIELDS = [
   "key", "start", "end", "domain", "title", "type", "cause", "severity", "duration",
-  "customerImpact", "revenueImpact", "status", "notes", "links",
+  "customerImpact", "revenueImpact", "status", "countsAgainstUptime", "notes", "links",
 ];
 
 function incidentRowFrom(payload, base = {}) {
