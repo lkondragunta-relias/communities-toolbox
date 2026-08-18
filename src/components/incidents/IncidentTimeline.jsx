@@ -180,13 +180,11 @@ export default function IncidentTimeline({
                     );
                     const clippedStart = entry.startMs < timeWindow.startMs;
                     const clippedEnd = (entry.endMs ?? entry.startMs) > timeWindow.endMs;
-                    // Only the worst events get a solid fill; everything else is
-                    // tinted, so a busy month reads as texture rather than noise.
-                    const solid = entry.severity.rank === 4 && !entry.type.planned;
+                    // Every bar gets a solid, vivid fill — outage or Track Event
+                    // alike — matching the client's mockup.
                     const classes = [
                       "ops-bar",
-                      solid ? "ops-bar--solid" : "ops-bar--tint",
-                      entry.type.planned && "ops-bar--planned",
+                      "ops-bar--solid",
                       entry.ongoing && "ops-bar--ongoing",
                       selectedId === entry.id && "is-selected",
                       clippedStart && "is-clipped-start",

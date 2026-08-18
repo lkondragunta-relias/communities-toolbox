@@ -80,6 +80,9 @@ export default function IncidentDetail({ entry, canEdit, onEdit, onDelete, onClo
               <Field label="Cause">{entry.cause || "—"}</Field>
               <Field label="Customer impact">{entry.customerImpact || "—"}</Field>
               <Field label="Revenue impact">{formatRevenue(entry.revenue)}</Field>
+              {!entry.type.planned ? (
+                <Field label="Counts against uptime">{entry.countsTowardUptime ? "Yes" : "No"}</Field>
+              ) : null}
               <div className="detail__field detail__field--block">
                 <span className="detail__field-label">Notes / cause</span>
                 <p className="detail__desc">{entry.notes || "No notes recorded."}</p>

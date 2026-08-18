@@ -7,7 +7,9 @@
  * here so the sheet never has to.
  */
 import {
+  UNKNOWN_COLOR,
   getEventColor,
+  normalizeToken,
   resolveIncidentSeverity,
   resolveIncidentStatus,
   resolveIncidentType,
@@ -291,6 +293,10 @@ export function normalizeIncident(
     rawLinks: String(raw.links ?? ""),
     color: getEventColor(type, severity),
     isIncident: !type.planned,
+    // Blank/missing means "counts" — a workbook without this column yet (or
+    // rows logged before it existed) must not silently drop out of Uptime%.
+    countsAgainstUptime: String(raw.countsAgainstUptime || "").trim(),
+    countsTowardUptime: normalizeToken(raw.countsAgainstUptime) !== "no",
   };
 }
 
@@ -325,8 +331,14 @@ export function nextIncidentId(rows) {
 
 /* ------------------------------- filtering ------------------------------- */
 
+export const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 export const INITIAL_INCIDENT_FILTERS = {
   year: "all",
+  month: "all",
   domains: null,
   severities: null,
   types: null,
@@ -371,6 +383,16 @@ export function filterIncidents(entries, filters) {
     if (filters.year !== "all" && new Date(e.startMs).getFullYear() !== Number(filters.year)) {
       return false;
     }
+    // Month only narrows anything once a specific year is also picked — "August
+    // across all years" is not a question this dashboard answers.
+    if (
+      filters.year !== "all" &&
+      filters.month &&
+      filters.month !== "all" &&
+      new Date(e.startMs).getMonth() + 1 !== Number(filters.month)
+    ) {
+      return false;
+    }
     if (!matchesSet(filters.domains, e.domainKey)) return false;
     if (!matchesSet(filters.severities, e.severity.label)) return false;
     if (!matchesSet(filters.types, e.type.label)) return false;
@@ -397,6 +419,7 @@ export function filterIncidents(entries, filters) {
 export function isIncidentFilterActive(filters) {
   return (
     filters.year !== "all" ||
+    (filters.year !== "all" && filters.month && filters.month !== "all") ||
     (filters.domains && filters.domains.size > 0) ||
     (filters.severities && filters.severities.size > 0) ||
     (filters.types && filters.types.size > 0) ||
@@ -449,17 +472,20 @@ export function computeIncidentStats(scoped, all) {
 
   const downtimeMinutes = incidents.reduce((sum, e) => sum + (e.effectiveMinutes || 0), 0);
 
+  // The SLA-facing figures (Uptime% and MTTR) only count outages flagged (or
+  // left blank) as counting against uptime — see `countsTowardUptime`. This is
+  // deliberately a *different* number from `downtimeMinutes` above, which the
+  // plain "Total downtime" tile keeps showing unfiltered.
+  const slaIncidents = incidents.filter((e) => e.countsTowardUptime);
+  const slaDowntimeMinutes = slaIncidents.reduce((sum, e) => sum + (e.effectiveMinutes || 0), 0);
+  const mttrMinutes = slaIncidents.length ? slaDowntimeMinutes / slaIncidents.length : null;
+
   let revenueAmount = 0;
   let symbolicCount = 0;
   scoped.forEach((e) => {
     if (e.revenue.symbolic && e.revenue.tier > 0) symbolicCount += 1;
     revenueAmount += e.revenue.amount;
   });
-
-  const resolved = incidents.filter((e) => !e.status.open && e.durationMinutes !== null);
-  const mttrMinutes = resolved.length
-    ? Math.round(resolved.reduce((sum, e) => sum + e.durationMinutes, 0) / resolved.length)
-    : null;
 
   const domainLabels = [...new Set(incidents.map((e) => e.domainLabel))];
 
@@ -474,6 +500,8 @@ export function computeIncidentStats(scoped, all) {
     criticalCount: critical.length,
     plannedCount: scoped.length - incidents.length,
     downtimeMinutes,
+    slaDowntimeMinutes,
+    slaIncidentCount: slaIncidents.length,
     revenueAmount,
     symbolicCount,
     mttrMinutes,
@@ -481,6 +509,102 @@ export function computeIncidentStats(scoped, all) {
     domainLabels,
     totalCount: scoped.length,
   };
+}
+
+/* --------------------------- period / uptime / breakdown ------------------ */
+
+/**
+ * The wall-clock window "Uptime%" is measured against, from the Year/Month
+ * filters. Returns null when Year is "all" — an ever-growing "since the first
+ * logged event" denominator would make the same percentage keep changing
+ * after the fact, so the UI shows a prompt to pick a year instead of a number.
+ */
+export function computeUptimePeriod(yearFilter, monthFilter, nowMs = Date.now()) {
+  if (yearFilter === "all" || yearFilter === undefined || yearFilter === null) return null;
+  const year = Number(yearFilter);
+  if (!Number.isFinite(year)) return null;
+
+  let startMs;
+  let endMs;
+  let label;
+  if (monthFilter && monthFilter !== "all") {
+    const month = Number(monthFilter);
+    if (!Number.isFinite(month) || month < 1 || month > 12) return null;
+    startMs = new Date(year, month - 1, 1).getTime();
+    endMs = new Date(year, month, 1).getTime();
+    const daysInMonth = new Date(year, month, 0).getDate();
+    label = `${MONTH_NAMES[month - 1]} 1 – ${daysInMonth}, ${year}`;
+  } else {
+    startMs = new Date(year, 0, 1).getTime();
+    endMs = new Date(year + 1, 0, 1).getTime();
+    label = String(year);
+  }
+
+  // A period still in progress is only "up" for the minutes that have already
+  // elapsed — the rest of the month/year hasn't had a chance to go down yet.
+  const clippedEndMs = Math.min(endMs, nowMs);
+  const minutes = Math.max(0, Math.round((clippedEndMs - startMs) / MINUTE_MS));
+  return { startMs, endMs: clippedEndMs, minutes, label };
+}
+
+/**
+ * Uptime% = (Total Minutes In Period − Total Downtime Minutes) / Total Minutes
+ * In Period × 100, where downtime only counts outages that count toward
+ * uptime (see `countsTowardUptime`). `scoped` is expected to already be
+ * filtered to the same year/month/domain as `period` (via `filterIncidents`).
+ */
+export function computeUptimePct(scoped, period) {
+  if (!period || period.minutes <= 0) return null;
+  const downtime = scoped
+    .filter((e) => e.isIncident && e.countsTowardUptime)
+    .reduce((sum, e) => sum + Math.min(e.effectiveMinutes || 0, period.minutes), 0);
+  const clamped = Math.min(downtime, period.minutes);
+  return ((period.minutes - clamped) / period.minutes) * 100;
+}
+
+/**
+ * Days since the most recent Critical-severity outage. Domain-filterable but
+ * deliberately period-independent — it's a trailing safety indicator, not a
+ * monthly stat, so narrowing to "August" shouldn't hide the fact that the last
+ * one was in June.
+ */
+export function computeDaysSinceLastCritical(entries, nowMs = Date.now()) {
+  let lastMs = null;
+  entries.forEach((e) => {
+    if (!e.isIncident || e.severity.rank !== 4) return;
+    if (lastMs === null || e.startMs > lastMs) lastMs = e.startMs;
+  });
+  if (lastMs === null) return null;
+  return Math.max(0, Math.floor((nowMs - lastMs) / DAY_MS));
+}
+
+/**
+ * Outage Breakdown chart data: downtime-minute totals grouped by cause or by
+ * severity (never by incident count — the client was explicit that a single
+ * long outage should outweigh several short ones). Not restricted to
+ * `countsTowardUptime`, matching the plain "Total downtime" tile rather than
+ * the SLA-filtered Uptime/MTTR figures.
+ */
+export function computeOutageBreakdown(scoped, mode = "cause", causeColors = {}) {
+  const incidents = scoped.filter((e) => e.isIncident);
+  const totalMinutes = incidents.reduce((sum, e) => sum + (e.effectiveMinutes || 0), 0);
+
+  const groups = new Map();
+  incidents.forEach((e) => {
+    const key = mode === "severity" ? e.severity.label : e.cause || "Unspecified";
+    if (!groups.has(key)) {
+      const color = mode === "severity" ? e.severity.color : causeColors[key] || UNKNOWN_COLOR;
+      groups.set(key, { label: key, color, minutes: 0 });
+    }
+    groups.get(key).minutes += e.effectiveMinutes || 0;
+  });
+
+  const segments = [...groups.values()]
+    .filter((g) => g.minutes > 0)
+    .sort((a, b) => b.minutes - a.minutes)
+    .map((g) => ({ ...g, pct: totalMinutes > 0 ? (g.minutes / totalMinutes) * 100 : 0 }));
+
+  return { totalMinutes, segments };
 }
 
 /* ------------------------------ time window ------------------------------ */
@@ -764,6 +888,7 @@ const CSV_HEADERS = [
   "Customer Impact",
   "Revenue Impact",
   "Status",
+  "Counts Against Uptime",
   "Notes",
   "Links",
 ];
@@ -791,6 +916,7 @@ export function incidentsToCsv(entries) {
         e.customerImpact,
         e.revenue.raw,
         e.status.label,
+        e.countsAgainstUptime,
         e.notes,
         e.rawLinks.replace(/\n/g, " / "),
       ]

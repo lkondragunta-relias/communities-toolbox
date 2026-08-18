@@ -2,22 +2,30 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import IncidentTimeline from "../incidents/IncidentTimeline";
 import IncidentDetail from "../incidents/IncidentDetail";
 import IncidentModal from "../incidents/IncidentModal";
+import OutageBreakdownChart from "../incidents/OutageBreakdownChart";
 import Icon from "../Icon";
 import {
   INCIDENT_SEVERITIES,
   buildTimelineLegend,
+  resolveIncidentDomainDefinitions,
   resolveIncidentVocabulary,
 } from "../../config/incidentConfig";
 import { addIncident, deleteIncident, updateIncident } from "../../services/sheetsApi";
 import { getDomainNameMap } from "../../utils/roadmapUtils";
 import {
   INITIAL_INCIDENT_FILTERS,
+  MONTH_NAMES,
   ZOOM_LEVELS,
   buildTickGroups,
   buildTicks,
   buildTimelineRows,
   buildTimelineWindow,
+  computeDaysSinceLastCritical,
   computeIncidentStats,
+  computeOutageBreakdown,
+  computeUptimePct,
+  computeUptimePeriod,
+  domainKeyOf,
   downloadCsv,
   filterIncidents,
   formatDomainList,
@@ -52,9 +60,12 @@ function pageNumbers(current, total) {
   return out;
 }
 
-function StatCard({ label, value, hint, tone }) {
+function StatCard({ label, value, hint, tone, accentColor }) {
   return (
-    <div className={`ops-stat ops-stat--${tone || "plain"}`}>
+    <div
+      className={`ops-stat ops-stat--${tone || "plain"}`}
+      style={accentColor ? { "--stat-accent": accentColor } : undefined}
+    >
       <div className="ops-stat__top">
         <span className="ops-stat__dot" aria-hidden="true" />
         <span className="ops-stat__label">{label}</span>
@@ -149,6 +160,7 @@ export default function IncidentsView({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(RECENT_PAGE);
   const [error, setError] = useState("");
+  const [breakdownMode, setBreakdownMode] = useState("cause");
 
   // The open drawer is part of the URL when the app supplies a router
   // (#/operations/INC-0002); standalone renders keep it in local state.
@@ -159,11 +171,65 @@ export default function IncidentsView({
   // Type and Cause vocabulary, straight from the Incident Config tab.
   const vocabulary = useMemo(() => resolveIncidentVocabulary(data?.incidentConfig), [data]);
   const legend = useMemo(() => buildTimelineLegend(vocabulary.types), [vocabulary]);
+  // "planned" is the same boolean the rest of the app already keys `isIncident`
+  // off — keying the dashboard-mode switch off it (rather than the literal
+  // label "Track Event") means a renamed type in the config tab can't break it.
+  const outageType = useMemo(() => vocabulary.types.find((t) => !t.planned) || null, [vocabulary]);
+  const trackEventType = useMemo(() => vocabulary.types.find((t) => t.planned) || null, [vocabulary]);
 
   const allEntries = useMemo(() => getIncidents(data, nowMs), [data, nowMs]);
   const scoped = useMemo(() => filterIncidents(allEntries, filters), [allEntries, filters]);
   const stats = useMemo(() => computeIncidentStats(scoped, allEntries), [scoped, allEntries]);
   const years = useMemo(() => getIncidentYears(allEntries), [allEntries]);
+
+  // Dynamic Dashboard Mode: the outage KPI row is replaced by per-cause Track
+  // Event tiles only when the Type filter is narrowed to exactly that type.
+  const isTrackEventMode = Boolean(
+    trackEventType &&
+      filters.types &&
+      filters.types.size === 1 &&
+      filters.types.has(trackEventType.label)
+  );
+  const trackEventTiles = useMemo(() => {
+    if (!isTrackEventMode || !trackEventType) return [];
+    const causes = (vocabulary.causesByType[trackEventType.label] || []).filter((c) => c.label);
+    return causes.map((c) => ({ ...c, count: scoped.filter((e) => e.cause === c.label).length }));
+  }, [isTrackEventMode, trackEventType, vocabulary, scoped]);
+
+  // Uptime% needs a wall-clock period (Year, or Year+Month); "All years" would
+  // make the denominator an ever-growing "since the first logged event", so it
+  // shows a prompt instead of a number there.
+  const uptimePeriod = useMemo(
+    () => computeUptimePeriod(filters.year, filters.month, nowMs),
+    [filters.year, filters.month, nowMs]
+  );
+  const uptimePct = useMemo(() => computeUptimePct(scoped, uptimePeriod), [scoped, uptimePeriod]);
+
+  // Days Since Last Critical Outage: domain-filtered, but period-independent —
+  // it's a trailing safety indicator, not a monthly stat.
+  const domainScopedEntries = useMemo(() => {
+    if (!filters.domains || filters.domains.size === 0) return allEntries;
+    return allEntries.filter((e) => filters.domains.has(e.domainKey));
+  }, [allEntries, filters.domains]);
+  const daysSinceCritical = useMemo(
+    () => computeDaysSinceLastCritical(domainScopedEntries, nowMs),
+    [domainScopedEntries, nowMs]
+  );
+
+  // Outage Breakdown donut: cause colors come from the same config-driven
+  // vocabulary the cause filter pills use, so a custom cause keeps its color.
+  const outageCauseColors = useMemo(() => {
+    const map = {};
+    const causes = (outageType && vocabulary.causesByType[outageType.label]) || [];
+    causes.forEach((c) => {
+      map[c.label] = c.color;
+    });
+    return map;
+  }, [vocabulary, outageType]);
+  const breakdown = useMemo(
+    () => computeOutageBreakdown(scoped, breakdownMode, outageCauseColors),
+    [scoped, breakdownMode, outageCauseColors]
+  );
 
   const timeWindow = useMemo(
     () => buildTimelineWindow(zoom, anchorMs, filters.year),
@@ -186,13 +252,21 @@ export default function IncidentsView({
     return computeIncidentStats(visible, allEntries);
   }, [scoped, timeWindow, allEntries]);
 
+  // Union of the Incident Config tab's Domain column (so a domain with zero
+  // logged events still appears) and whatever domains events actually use
+  // (so a stale/incomplete config tab never hides real data).
   const domainOptions = useMemo(() => {
     const map = new Map();
-    allEntries.forEach((e) => map.set(e.domainKey, e.domainLabel));
+    resolveIncidentDomainDefinitions(data?.incidentConfig).forEach((label) =>
+      map.set(domainKeyOf(label), label)
+    );
+    allEntries.forEach((e) => {
+      if (!map.has(e.domainKey)) map.set(e.domainKey, e.domainLabel);
+    });
     return [...map.entries()]
       .map(([key, label]) => ({ key, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [allEntries]);
+  }, [data, allEntries]);
 
   // The Add form suggests domains already used for events plus roadmap domains.
   const domainSuggestions = useMemo(() => {
@@ -209,6 +283,11 @@ export default function IncidentsView({
   const filterActive = isIncidentFilterActive(filters);
   const scopeLabel = filters.year === "all" ? "all time" : String(filters.year);
   const zoomIndex = Math.max(0, ZOOM_LEVELS.findIndex((l) => l.id === zoom));
+  const scopedDomainLabel =
+    filters.domains && filters.domains.size === 1
+      ? domainOptions.find((d) => filters.domains.has(d.key))?.label
+      : null;
+  const downtimeHint = scopedDomainLabel ? `Across ${scopedDomainLabel}` : "Across all domains";
 
   /* --------------------------- filter handlers --------------------------- */
 
@@ -232,7 +311,9 @@ export default function IncidentsView({
   const handleYearChange = useCallback(
     (value) => {
       const year = value === "all" ? "all" : Number(value);
-      setFilters((prev) => ({ ...prev, year }));
+      // A month picked for one year rarely means anything for another, so it
+      // resets rather than silently carrying over.
+      setFilters((prev) => ({ ...prev, year, month: "all" }));
       setPage(1);
       if (year !== "all") {
         const thisYear = new Date().getFullYear();
@@ -240,6 +321,21 @@ export default function IncidentsView({
       }
     },
     []
+  );
+
+  const handleMonthChange = useCallback(
+    (value) => {
+      const month = value === "all" ? "all" : Number(value);
+      setFilters((prev) => ({ ...prev, month }));
+      setPage(1);
+      if (month !== "all" && filters.year !== "all") {
+        setAnchorMs(new Date(Number(filters.year), month - 1, 15).getTime());
+        // The year-pinned "Months" zoom shows all 12 months at once, which
+        // stops making sense once narrowed to one — drop to a closer zoom.
+        setZoom((prev) => (prev === "month" ? "day" : prev));
+      }
+    },
+    [filters.year]
   );
 
   const handleToday = useCallback(() => {
@@ -374,6 +470,7 @@ export default function IncidentsView({
         customerImpact: entry.customerImpact,
         revenueImpact: entry.revenue.raw,
         status: entry.status.label,
+        countsAgainstUptime: entry.countsTowardUptime,
         notes: entry.notes,
         links: entry.rawLinks,
       },
@@ -421,48 +518,6 @@ export default function IncidentsView({
 
       {error ? <p className="ops__error">{error}</p> : null}
 
-      <div className="ops__stats">
-        <StatCard
-          label="Active incidents"
-          value={stats.openCount}
-          hint={
-            <SeverityCounts counts={stats.openSeverity} empty="Nothing open right now" />
-          }
-          tone={stats.openCount ? "danger" : "ok"}
-        />
-        <StatCard
-          label={`Incidents · ${scopeLabel}`}
-          value={stats.incidentCount}
-          hint={<SeverityCounts counts={stats.severity} empty="None logged in this scope" />}
-          tone="warn"
-        />
-        <StatCard
-          label={`Downtime · ${scopeLabel}`}
-          value={formatDuration(stats.downtimeMinutes)}
-          hint={
-            stats.mttrMinutes === null
-              ? "No resolved incidents yet"
-              : `Mean time to recovery ${formatDuration(stats.mttrMinutes)}`
-          }
-          tone="info"
-        />
-        <StatCard
-          label={`Revenue impact · ${scopeLabel}`}
-          value={formatMoney(stats.revenueAmount)}
-          hint={
-            stats.symbolicCount
-              ? `Plus ${stats.symbolicCount} logged as $ tiers`
-              : "Estimated from logged events"
-          }
-          tone="success"
-        />
-        <StatCard
-          label="Domains affected"
-          value={stats.domainCount}
-          hint={formatDomainList(stats.domainLabels)}
-        />
-      </div>
-
       <div className="ops__filters">
         <div className="ops__filter-row">
           <Control label="Year" icon="calendar">
@@ -475,6 +530,22 @@ export default function IncidentsView({
               {years.map((year) => (
                 <option key={year} value={year}>
                   {year}
+                </option>
+              ))}
+            </select>
+          </Control>
+
+          <Control label="Month" icon="calendar">
+            <select
+              className="ops-control__input"
+              value={filters.month}
+              disabled={filters.year === "all"}
+              onChange={(e) => handleMonthChange(e.target.value)}
+            >
+              <option value="all">All months</option>
+              {MONTH_NAMES.map((name, i) => (
+                <option key={name} value={i + 1}>
+                  {name}
                 </option>
               ))}
             </select>
@@ -540,14 +611,102 @@ export default function IncidentsView({
             Clear
           </button>
         </div>
+      </div>
 
+      <div className="ops__stats">
+        {isTrackEventMode ? (
+          trackEventTiles.length === 0 ? (
+            <p className="ops-empty">
+              No causes configured for {trackEventType.label} yet — add a "
+              {trackEventType.label} Cause" column in the Incident Config tab.
+            </p>
+          ) : (
+            trackEventTiles.map((c) => (
+              <StatCard key={c.id} label={c.label} value={c.count} accentColor={c.color} />
+            ))
+          )
+        ) : (
+          <>
+            <StatCard
+              label="Active incidents"
+              value={stats.openCount}
+              hint={
+                <SeverityCounts counts={stats.openSeverity} empty="Nothing open right now" />
+              }
+              tone={stats.openCount ? "danger" : "ok"}
+            />
+            <StatCard
+              label={`Incidents · ${scopeLabel}`}
+              value={stats.incidentCount}
+              hint={<SeverityCounts counts={stats.severity} empty="None logged in this scope" />}
+              tone="warn"
+            />
+            <StatCard
+              label={`Downtime · ${scopeLabel}`}
+              value={formatDuration(stats.downtimeMinutes)}
+              hint={downtimeHint}
+              tone="info"
+            />
+            <StatCard
+              label="Uptime"
+              value={uptimePct !== null ? `${uptimePct.toFixed(2)}%` : "—"}
+              hint={
+                !uptimePeriod
+                  ? "Pick a year to see Uptime%"
+                  : uptimePct !== null
+                    ? uptimePeriod.label
+                    : "This period hasn't started yet"
+              }
+              tone="ok"
+            />
+            <StatCard
+              label={`Revenue impact · ${scopeLabel}`}
+              value={formatMoney(stats.revenueAmount)}
+              hint={
+                stats.symbolicCount
+                  ? `Plus ${stats.symbolicCount} logged as $ tiers`
+                  : "Estimated from logged events"
+              }
+              tone="success"
+            />
+            <StatCard
+              label="Domains affected"
+              value={stats.domainCount}
+              hint={formatDomainList(stats.domainLabels)}
+            />
+            <StatCard
+              label="MTTR (Outages)"
+              value={stats.mttrMinutes === null ? "—" : formatDuration(stats.mttrMinutes)}
+              hint={
+                stats.slaIncidentCount
+                  ? `Mean time to recovery · ${stats.slaIncidentCount} outage${
+                      stats.slaIncidentCount === 1 ? "" : "s"
+                    }`
+                  : "No outages counted toward uptime yet"
+              }
+            />
+            <StatCard
+              label="Days since last critical"
+              value={daysSinceCritical === null ? "—" : daysSinceCritical}
+              hint={
+                daysSinceCritical === null
+                  ? "No critical outages logged"
+                  : "Since the last Critical severity outage"
+              }
+              tone={daysSinceCritical !== null && daysSinceCritical < 7 ? "danger" : "ok"}
+            />
+          </>
+        )}
+      </div>
+
+      <div className="ops__pills">
         {vocabulary.types.map((type) => {
           const causes = vocabulary.causesByType[type.label] || [];
           if (causes.length === 0) return null;
           return (
             <TogglePills
               key={type.id}
-              label={type.label}
+              label={`${type.label} ${type.planned ? "Type" : "Cause"}`}
               options={causes}
               selected={filters.causes?.[type.label] || null}
               onChange={(selected) => setCauseFilter(type.label, selected)}
@@ -556,114 +715,137 @@ export default function IncidentsView({
         })}
       </div>
 
-      <section className="ops-panel">
-        <header className="ops-timeline__toolbar">
-          <span className="ops-timeline__range">{formatWindowLabel(timeWindow)}</span>
-          <div className="ops-panel__controls">
-            <div className="ops-nav">
-              <button type="button" className="ops-nav__today" onClick={handleToday}>
-                Today
-              </button>
-              <button
-                type="button"
-                className="ops-nav__btn"
-                aria-label="Previous period"
-                onClick={() => shiftWindow(-1)}
-              >
-                ‹
-              </button>
-              <button
-                type="button"
-                className="ops-nav__btn"
-                aria-label="Next period"
-                onClick={() => shiftWindow(1)}
-              >
-                ›
-              </button>
+      <div className="ops-analytics-row">
+        <section className="ops-panel">
+          <header className="ops-timeline__toolbar">
+            <span className="ops-timeline__range">{formatWindowLabel(timeWindow)}</span>
+            <div className="ops-panel__controls">
+              <div className="ops-nav">
+                <button type="button" className="ops-nav__today" onClick={handleToday}>
+                  Today
+                </button>
+                <button
+                  type="button"
+                  className="ops-nav__btn"
+                  aria-label="Previous period"
+                  onClick={() => shiftWindow(-1)}
+                >
+                  ‹
+                </button>
+                <button
+                  type="button"
+                  className="ops-nav__btn"
+                  aria-label="Next period"
+                  onClick={() => shiftWindow(1)}
+                >
+                  ›
+                </button>
+              </div>
+              <div className="ops-zoom" role="group" aria-label="Zoom">
+                <span className="ops-zoom__label">Zoom</span>
+                <button
+                  type="button"
+                  className="ops-nav__btn"
+                  aria-label="Zoom out"
+                  disabled={zoomIndex === 0}
+                  onClick={() => setZoom(ZOOM_LEVELS[zoomIndex - 1].id)}
+                >
+                  <Icon name="zoomOut" className="ops-icon" />
+                </button>
+                <span className="ops-zoom__level">{ZOOM_LEVELS[zoomIndex].label}</span>
+                <button
+                  type="button"
+                  className="ops-nav__btn"
+                  aria-label="Zoom in"
+                  disabled={zoomIndex === ZOOM_LEVELS.length - 1}
+                  onClick={zoomIn}
+                >
+                  <Icon name="zoomIn" className="ops-icon" />
+                </button>
+              </div>
             </div>
-            <div className="ops-zoom" role="group" aria-label="Zoom">
-              <span className="ops-zoom__label">Zoom</span>
-              <button
-                type="button"
-                className="ops-nav__btn"
-                aria-label="Zoom out"
-                disabled={zoomIndex === 0}
-                onClick={() => setZoom(ZOOM_LEVELS[zoomIndex - 1].id)}
-              >
-                <Icon name="zoomOut" className="ops-icon" />
-              </button>
-              <span className="ops-zoom__level">{ZOOM_LEVELS[zoomIndex].label}</span>
-              <button
-                type="button"
-                className="ops-nav__btn"
-                aria-label="Zoom in"
-                disabled={zoomIndex === ZOOM_LEVELS.length - 1}
-                onClick={zoomIn}
-              >
-                <Icon name="zoomIn" className="ops-icon" />
-              </button>
-            </div>
-          </div>
-        </header>
+          </header>
 
-        {allEntries.length === 0 ? (
-          <div className="ops-empty">
-            <p>No events logged yet.</p>
-            <p className="ops-empty__hint">
-              Use <strong>+ Add event</strong> to log the first outage, incident, release or change.
-              The <strong>Incidents</strong> tab and its columns are created in the spreadsheet
-              automatically on the first save — nothing to set up by hand. If saving reports an
-              unknown action, the Apps Script Web App needs redeploying first (see the README).
+          {allEntries.length === 0 ? (
+            <div className="ops-empty">
+              <p>No events logged yet.</p>
+              <p className="ops-empty__hint">
+                Use <strong>+ Add event</strong> to log the first outage, incident, release or change.
+                The <strong>Incidents</strong> tab and its columns are created in the spreadsheet
+                automatically on the first save — nothing to set up by hand. If saving reports an
+                unknown action, the Apps Script Web App needs redeploying first (see the README).
+              </p>
+            </div>
+          ) : rows.length === 0 ? (
+            <p className="ops-empty">
+              No events in this window.{" "}
+              {filterActive ? "Try clearing filters" : "Use ‹ › or Today to move the timeline"}.
+            </p>
+          ) : (
+            <IncidentTimeline
+              rows={rows}
+              ticks={ticks}
+              groups={groups}
+              window={timeWindow}
+              zoom={zoom}
+              nowMs={nowMs}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+            />
+          )}
+
+          <div className="ops-legend-row">
+            <ul className="ops-legend">
+              {legend.map((item) => (
+                <li key={item.key}>
+                  <span
+                    className={`ops-legend__swatch${item.planned ? " is-planned" : ""}`}
+                    style={{ background: item.color }}
+                  />
+                  {item.label}
+                </li>
+              ))}
+            </ul>
+            <p className="ops-legend__totals">
+              Downtime (selected range){" "}
+              <strong>{formatDuration(windowStats.downtimeMinutes)}</strong>
+              <span aria-hidden="true"> · </span>
+              Revenue impact{" "}
+              <strong className="ops-legend__money">{formatMoney(windowStats.revenueAmount)}</strong>
             </p>
           </div>
-        ) : rows.length === 0 ? (
-          <p className="ops-empty">
-            No events in this window.{" "}
-            {filterActive ? "Try clearing filters" : "Use ‹ › or Today to move the timeline"}.
-          </p>
-        ) : (
-          <IncidentTimeline
-            rows={rows}
-            ticks={ticks}
-            groups={groups}
-            window={timeWindow}
-            zoom={zoom}
-            nowMs={nowMs}
-            selectedId={selectedId}
-            onSelect={setSelectedId}
-          />
-        )}
+        </section>
 
-        <div className="ops-legend-row">
-          <ul className="ops-legend">
-            {legend.map((item) => (
-              <li key={item.key}>
-                <span
-                  className={`ops-legend__swatch${item.planned ? " is-planned" : ""}`}
-                  style={{ background: item.color }}
-                />
-                {item.label}
-              </li>
-            ))}
-          </ul>
-          <p className="ops-legend__totals">
-            Downtime (selected range){" "}
-            <strong>{formatDuration(windowStats.downtimeMinutes)}</strong>
-            <span aria-hidden="true"> · </span>
-            Revenue impact{" "}
-            <strong className="ops-legend__money">{formatMoney(windowStats.revenueAmount)}</strong>
-          </p>
-        </div>
-      </section>
+        <OutageBreakdownChart
+          segments={breakdown.segments}
+          totalMinutes={breakdown.totalMinutes}
+          mode={breakdownMode}
+          onModeChange={setBreakdownMode}
+        />
+      </div>
 
       <section className="ops-panel">
         <header className="ops-panel__head">
           <div>
-            <h3 className="ops-panel__title">Recent activity</h3>
+            <h3 className="ops-panel__title">
+              Recent activity{uptimePeriod ? ` (${uptimePeriod.label})` : ""}
+            </h3>
             <p className="ops-panel__sub">
               {scoped.length} event{scoped.length === 1 ? "" : "s"} · {scopeLabel}
             </p>
           </div>
+          {scoped.length > pageSize ? (
+            <button
+              type="button"
+              className="ops-panel__link"
+              onClick={() => {
+                setPageSize(scoped.length);
+                setPage(1);
+              }}
+            >
+              View all events →
+            </button>
+          ) : null}
         </header>
 
         {scoped.length === 0 ? (
