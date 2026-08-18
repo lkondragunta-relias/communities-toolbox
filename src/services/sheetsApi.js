@@ -535,3 +535,5 @@ export function validateTeamForm({ teamId, teamName, color }) {
 
   return { errors, valid: Object.keys(errors).length === 0 };
 }
+
+
