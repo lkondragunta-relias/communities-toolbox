@@ -20,6 +20,7 @@ import {
   buildTicks,
   buildTimelineRows,
   buildTimelineWindow,
+  computeAllTimeUptimePeriod,
   computeDaysSinceLastCritical,
   computeIncidentStats,
   computeOutageBreakdown,
@@ -196,13 +197,13 @@ export default function IncidentsView({
     return causes.map((c) => ({ ...c, count: scoped.filter((e) => e.cause === c.label).length }));
   }, [isTrackEventMode, trackEventType, vocabulary, scoped]);
 
-  // Uptime% needs a wall-clock period (Year, or Year+Month); "All years" would
-  // make the denominator an ever-growing "since the first logged event", so it
-  // shows a prompt instead of a number there.
-  const uptimePeriod = useMemo(
-    () => computeUptimePeriod(filters.year, filters.month, nowMs),
-    [filters.year, filters.month, nowMs]
-  );
+  // Uptime% needs a wall-clock period. A picked Year (or Year+Month) gets a
+  // fixed calendar window; "All years" falls back to "since the earliest
+  // logged event", which grows over time but still beats showing nothing.
+  const uptimePeriod = useMemo(() => {
+    if (filters.year === "all") return computeAllTimeUptimePeriod(allEntries, nowMs);
+    return computeUptimePeriod(filters.year, filters.month, nowMs);
+  }, [filters.year, filters.month, nowMs, allEntries]);
   const uptimePct = useMemo(() => computeUptimePct(scoped, uptimePeriod), [scoped, uptimePeriod]);
 
   // Days Since Last Critical Outage: domain-filtered, but period-independent —
@@ -652,7 +653,7 @@ export default function IncidentsView({
               value={uptimePct !== null ? `${uptimePct.toFixed(2)}%` : "—"}
               hint={
                 !uptimePeriod
-                  ? "Pick a year to see Uptime%"
+                  ? "No events logged yet"
                   : uptimePct !== null
                     ? uptimePeriod.label
                     : "This period hasn't started yet"
@@ -788,7 +789,6 @@ export default function IncidentsView({
               groups={groups}
               window={timeWindow}
               zoom={zoom}
-              nowMs={nowMs}
               selectedId={selectedId}
               onSelect={setSelectedId}
             />

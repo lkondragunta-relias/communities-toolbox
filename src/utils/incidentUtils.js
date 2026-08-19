@@ -472,10 +472,11 @@ export function computeIncidentStats(scoped, all) {
 
   const downtimeMinutes = incidents.reduce((sum, e) => sum + (e.effectiveMinutes || 0), 0);
 
-  // The SLA-facing figures (Uptime% and MTTR) only count outages flagged (or
-  // left blank) as counting against uptime — see `countsTowardUptime`. This is
-  // deliberately a *different* number from `downtimeMinutes` above, which the
-  // plain "Total downtime" tile keeps showing unfiltered.
+  // MTTR only counts outages flagged (or left blank) as counting against
+  // uptime — see `countsTowardUptime` — so a maintenance window logged as "No"
+  // doesn't drag down the average recovery time. Uptime% itself is computed
+  // straight from `downtimeMinutes` above (see `computeUptimePct`), so the two
+  // tiles stay consistent with each other.
   const slaIncidents = incidents.filter((e) => e.countsTowardUptime);
   const slaDowntimeMinutes = slaIncidents.reduce((sum, e) => sum + (e.effectiveMinutes || 0), 0);
   const mttrMinutes = slaIncidents.length ? slaDowntimeMinutes / slaIncidents.length : null;
@@ -515,9 +516,8 @@ export function computeIncidentStats(scoped, all) {
 
 /**
  * The wall-clock window "Uptime%" is measured against, from the Year/Month
- * filters. Returns null when Year is "all" — an ever-growing "since the first
- * logged event" denominator would make the same percentage keep changing
- * after the fact, so the UI shows a prompt to pick a year instead of a number.
+ * filters. Returns null when Year is "all" — the caller falls back to
+ * `computeAllTimeUptimePeriod` for that case (see below).
  */
 export function computeUptimePeriod(yearFilter, monthFilter, nowMs = Date.now()) {
   if (yearFilter === "all" || yearFilter === undefined || yearFilter === null) return null;
@@ -548,15 +548,35 @@ export function computeUptimePeriod(yearFilter, monthFilter, nowMs = Date.now())
 }
 
 /**
+ * "All years" fallback period: since the earliest logged event (of any type)
+ * through now, rather than a fixed calendar window. Unlike a picked year this
+ * denominator grows over time, so the percentage will drift slightly as older
+ * history is added — acceptable for a headline "since we started tracking"
+ * figure, but why a specific year still gets a fixed, stable window instead.
+ */
+export function computeAllTimeUptimePeriod(entries, nowMs = Date.now()) {
+  if (!entries.length) return null;
+  const startMs = entries.reduce((min, e) => Math.min(min, e.startMs), entries[0].startMs);
+  const minutes = Math.max(0, Math.round((nowMs - startMs) / MINUTE_MS));
+  const label = `Since ${new Date(startMs).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  })}`;
+  return { startMs, endMs: nowMs, minutes, label };
+}
+
+/**
  * Uptime% = (Total Minutes In Period − Total Downtime Minutes) / Total Minutes
- * In Period × 100, where downtime only counts outages that count toward
- * uptime (see `countsTowardUptime`). `scoped` is expected to already be
- * filtered to the same year/month/domain as `period` (via `filterIncidents`).
+ * In Period × 100. Downtime here is every incident (same set the "Downtime"
+ * tile totals up — see `downtimeMinutes` in `computeIncidentStats`), so the
+ * two tiles always agree; `scoped` is expected to already be filtered to the
+ * same year/month/domain as `period` (via `filterIncidents`).
  */
 export function computeUptimePct(scoped, period) {
   if (!period || period.minutes <= 0) return null;
   const downtime = scoped
-    .filter((e) => e.isIncident && e.countsTowardUptime)
+    .filter((e) => e.isIncident)
     .reduce((sum, e) => sum + Math.min(e.effectiveMinutes || 0, period.minutes), 0);
   const clamped = Math.min(downtime, period.minutes);
   return ((period.minutes - clamped) / period.minutes) * 100;

@@ -3052,27 +3052,6 @@ html, body, #root { height: 100%; }
   overflow: hidden;
 }
 
-.ops-timeline__now {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 0;
-  border-left: 1px dashed #ef4444;
-  z-index: 3;
-  pointer-events: none;
-}
-
-.ops-timeline__now-caret {
-  position: absolute;
-  top: 0;
-  left: -4px;
-  width: 0;
-  height: 0;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-top: 5px solid #ef4444;
-}
-
 .ops-row {
   display: grid;
   grid-template-columns: var(--ops-label-w) 1fr;
