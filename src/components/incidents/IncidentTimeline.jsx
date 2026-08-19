@@ -68,7 +68,6 @@ export default function IncidentTimeline({
   groups,
   window: timeWindow,
   zoom,
-  nowMs,
   selectedId,
   onSelect,
 }) {
@@ -79,10 +78,6 @@ export default function IncidentTimeline({
     .join(" ");
   // Below this the timeline scrolls sideways instead of squashing columns.
   const minWidth = `calc(var(--ops-label-w) + ${ticks.length * (MIN_TICK_PX[zoom] || 60)}px)`;
-  const nowPct =
-    nowMs >= timeWindow.startMs && nowMs <= timeWindow.endMs
-      ? positionInWindow(nowMs, timeWindow)
-      : null;
 
   const handleEnter = useCallback((event, entry) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -137,17 +132,6 @@ export default function IncidentTimeline({
           </div>
 
           <div className="ops-timeline__body">
-            {nowPct !== null ? (
-              <div
-                className="ops-timeline__now"
-                style={{
-                  left: `calc(var(--ops-label-w) + (100% - var(--ops-label-w)) * ${nowPct / 100})`,
-                }}
-              >
-                <span className="ops-timeline__now-caret" />
-              </div>
-            ) : null}
-
             {rows.map((row) => (
               <div className="ops-row" key={row.key} style={{ height: `${rowHeight(row.laneCount)}px` }}>
                 <div
