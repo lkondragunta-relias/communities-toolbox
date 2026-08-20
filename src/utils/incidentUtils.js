@@ -8,6 +8,7 @@
  */
 import {
   UNKNOWN_COLOR,
+  DOMAIN_COLORS,
   getEventColor,
   normalizeToken,
   resolveIncidentSeverity,
@@ -611,9 +612,19 @@ export function computeOutageBreakdown(scoped, mode = "cause", causeColors = {})
 
   const groups = new Map();
   incidents.forEach((e) => {
-    const key = mode === "severity" ? e.severity.label : e.cause || "Unspecified";
+    const key =
+      mode === "severity"
+        ? e.severity.label
+        : mode === "domain"
+          ? e.domainLabel || "Unassigned"
+          : e.cause || "Unspecified";
     if (!groups.has(key)) {
-      const color = mode === "severity" ? e.severity.color : causeColors[key] || UNKNOWN_COLOR;
+      const color =
+        mode === "severity"
+          ? e.severity.color
+          : mode === "domain"
+            ? DOMAIN_COLORS[key.toLowerCase()] || UNKNOWN_COLOR
+            : causeColors[key] || UNKNOWN_COLOR;
       groups.set(key, { label: key, color, minutes: 0 });
     }
     groups.get(key).minutes += e.effectiveMinutes || 0;
