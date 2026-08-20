@@ -10,15 +10,21 @@ const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
 // would inform, so it's left to the legend row instead.
 const MIN_LABEL_PCT = 6;
 
-const OTHER_MODE = { cause: "severity", severity: "cause" };
-const MODE_TITLE = { cause: "Cause", severity: "Severity" };
+const OTHER_MODE = { cause: "severity", severity: "cause", domain: "cause" };
+const MODE_TITLE = { cause: "Cause", severity: "Severity", domain: "Domain" };
 
 /**
  * Large "Outage Breakdown" doughnut: percentages are downtime-minute shares
  * (never incident counts), sliced by cause or by severity. Pure SVG — no
  * chart library — following the app's existing no-dependency-icon pattern.
  */
-export default function OutageBreakdownChart({ segments, totalMinutes, mode, onModeChange }) {
+export default function OutageBreakdownChart({
+  segments,
+  totalMinutes,
+  mode,
+  onModeChange,
+  showDomainTab = false,
+}) {
   const hasData = totalMinutes > 0 && segments.length > 0;
 
   // Cumulative offsets, with the last segment consuming the exact remainder
@@ -61,6 +67,15 @@ export default function OutageBreakdownChart({ segments, totalMinutes, mode, onM
           >
             By Severity
           </button>
+          {showDomainTab ? (
+            <button
+              type="button"
+              className={`ops-toggle${mode === "domain" ? " is-on" : ""}`}
+              onClick={() => onModeChange("domain")}
+            >
+              By Domain
+            </button>
+          ) : null}
         </div>
       </header>
       <p className="ops-panel__sub ops-breakdown__sub">

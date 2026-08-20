@@ -75,6 +75,22 @@ export const DEFAULT_DOMAINS = [
   "RLMS",
 ];
 
+/** Distinct colors per domain for the breakdown doughnut chart. */
+export const DOMAIN_COLORS = {
+  "relias academy":         "#6366f1", // indigo
+  "nurse ecommerce & edu":  "#f59e0b", // amber
+  "nurse home & jobs":      "#10b981", // emerald
+  "freecme":                "#3b82f6", // blue
+  "clinician":              "#ec4899", // pink
+  "wcei":                   "#8b5cf6", // violet
+  "academy portals":        "#14b8a6", // teal
+  "rlp":                    "#f97316", // orange
+  "rlms":                   "#06b6d4", // cyan
+  "multiple":               "#a855f7", // purple
+  "infrastructure":         "#84cc16", // lime
+  "other":                  "#64748b", // slate fallback
+};
+
 /**
  * Map legacy type values (pre-refactor) to the new two-type model.
  * Called when reading existing sheet rows so old data keeps working.

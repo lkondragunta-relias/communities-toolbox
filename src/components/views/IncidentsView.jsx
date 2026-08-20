@@ -288,7 +288,12 @@ export default function IncidentsView({
     filters.domains && filters.domains.size === 1
       ? domainOptions.find((d) => filters.domains.has(d.key))?.label
       : null;
+  const isAllDomainsSelected = !filters.domains || filters.domains.size === 0;
   const downtimeHint = scopedDomainLabel ? `Across ${scopedDomainLabel}` : "Across all domains";
+
+  useEffect(() => {
+    if (!isAllDomainsSelected && breakdownMode === "domain") setBreakdownMode("cause");
+  }, [isAllDomainsSelected, breakdownMode]);
 
   /* --------------------------- filter handlers --------------------------- */
 
@@ -821,6 +826,7 @@ export default function IncidentsView({
           totalMinutes={breakdown.totalMinutes}
           mode={breakdownMode}
           onModeChange={setBreakdownMode}
+          showDomainTab={isAllDomainsSelected}
         />
       </div>
 
