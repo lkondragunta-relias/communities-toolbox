@@ -155,9 +155,9 @@ The page uses the existing admin controls for adding, editing, and removing
 assignments. **Add assignment** can reuse an existing person or add a new one.
 Edit/remove person assignments from **People**, vacancies from **Open roles &
 flags**, and team-only allocations or explicit UX None from the management section near the bottom.
-**Domains, teams, roles & partners** adds or updates organization-page domain names/order,
-teams, role categories, and partner colors. It can remove an unused org domain;
-assigned domains must have their assignments removed first.
+Use **Open workbook** to manage organization-page domain names/order (Q–S),
+teams (U–V), role categories (K–L), and partner colors (N–O) directly in the Sheet.
+Remove a domain's assignments before clearing its domain reference cells.
 Original Domains and Teams are not edited
 through this organization page.
 
