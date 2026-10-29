@@ -5,7 +5,9 @@
 .org-head p { max-width: 760px; }
 .org-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .org-page button, .org-dialog button { cursor: pointer; font: inherit; }
-.org-page :where(button:not(.org-badge, .org-link)), .org-dialog button { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.org-page :where(button:not(.org-badge, .org-link)), .org-dialog button, .org-workbook-button { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.org-page .org-workbook-button { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 600; text-decoration: none; background: #2563eb; border-color: #2563eb; color: #fff; }
+.org-page .org-workbook-button:hover { background: #1d4ed8; border-color: #1d4ed8; }
 .org-page button:disabled, .org-dialog button:disabled { opacity: .6; cursor: wait; }
 .org-page .org-primary, .org-dialog .org-primary { background: #16634c; border-color: #16634c; color: #fff; }
 .org-page :is(button, input, select, a):focus-visible, .org-dialog :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }

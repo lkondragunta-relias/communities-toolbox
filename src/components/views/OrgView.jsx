@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ORG_CATEGORIES, ORG_FIELDS, orgKey, organizationColor, personKey, validateOrgAssignment } from "../../config/orgConfig.js";
+import { ORG_FIELDS, orgKey, organizationColor, personKey, validateOrgAssignment } from "../../config/orgConfig.js";
 import { buildOrganization, filterOrgRows, groupOrgRows, orgTeamAndPartnerBadges } from "../../utils/orgUtils.js";
-import { deleteOrgAssignment, deleteOrgDomain, getGoogleSheetUrl, isLocalMode, saveOrgAssignment, saveOrgDomain, saveOrgOrganization, saveOrgRole, saveOrgTeam } from "../../services/sheetsApi";
+import { deleteOrgAssignment, getGoogleSheetUrl, isLocalMode, saveOrgAssignment } from "../../services/sheetsApi";
 import "../../styles/org.css";
 
 const TABS = [
@@ -139,58 +139,6 @@ function AssignmentForm({ entry, model, onSave, onClose }) {
   );
 }
 
-function ReferenceForm({ model, onSave, onDeleteDomain, onClose }) {
-  const [kind, setKind] = useState("role");
-  const [name, setName] = useState("");
-  const [category, setCategory] = useState("ENG Team members");
-  const [color, setColor] = useState("#2563eb");
-  const [domainId, setDomainId] = useState("");
-  const [order, setOrder] = useState(model.domains.length + 1);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const choices = kind === "role" ? model.roles : kind === "domain" ? model.domains : kind === "team" ? model.teams.map((team) => ({ ...team, name: team.label })) : model.organizations;
-  const select = (value) => {
-    setName(value);
-    const existing = choices.find((item) => item.name === value);
-    setCategory(existing?.category || "ENG Team members");
-    setColor(existing?.color || "#2563eb");
-    setDomainId(existing?.id || "");
-    setOrder(existing?.order ?? model.domains.length + 1);
-  };
-  return (
-    <Dialog title="Manage domains, teams, roles & partners" onClose={onClose} busy={busy}>
-      <form onSubmit={async (event) => {
-        event.preventDefault(); setBusy(true); setError("");
-        try { await onSave(kind, { name, category, color, id: domainId, order }); onClose(); }
-        catch (err) { setError(err.message); }
-        finally { setBusy(false); }
-      }}>
-        <p>All changes here affect only Prod Eng Org: roles K–L, partners N–O, domains Q–S, teams U–V. The original Domains and Teams tabs are read-only. Lower domain order numbers appear first.</p>
-        <fieldset disabled={busy}>
-          <Field label="List"><select value={kind} onChange={(e) => { setKind(e.target.value); setName(""); setDomainId(""); setOrder(model.domains.length + 1); }}><option value="role">Roles</option><option value="organization">Organizations / partners</option><option value="domain">Domains & order</option><option value="team">Engineering teams</option></select></Field>
-          <Field label="Edit existing"><select value={choices.some((item) => item.name === name) ? name : ""} onChange={(e) => select(e.target.value)}>
-            <option value="">Add new</option>{choices.map((item) => <option key={item.id || item.name}>{item.name}</option>)}
-          </select></Field>
-          <Field label="Name"><input required value={name} onChange={(e) => setName(e.target.value)} /></Field>
-          {kind === "domain" || kind === "team" ? <>
-            <Field label={`${kind === "team" ? "Team" : "Domain"} ID (stable identifier)`}><input required value={domainId} readOnly={choices.some((item) => item.id === domainId)} onChange={(e) => setDomainId(e.target.value)} /></Field>
-            {kind === "domain" ? <Field label="Domain order"><input type="number" step="any" required value={order} onChange={(e) => setOrder(e.target.value)} /></Field> : null}
-          </> : kind === "role" ? <Field label="Display column"><select value={category} onChange={(e) => setCategory(e.target.value)}>{ORG_CATEGORIES.map((item) => <option key={item}>{item}</option>)}</select></Field> :
-            <Field label="Member badge color"><input type="color" disabled={orgKey(name) === "relias"} value={orgKey(name) === "relias" ? "#15803d" : color} onChange={(e) => setColor(e.target.value)} /></Field>}
-        </fieldset>
-        {error ? <p role="alert" className="roadmap__error">{error}</p> : null}
-        <footer>{kind === "domain" && model.domains.some((domain) => domain.id === domainId) ? <button type="button" disabled={busy} onClick={async () => {
-          if (!window.confirm(`Remove ${name} from the organization page only? Remove its assignments first. Roadmap and incident domains are not affected.`)) return;
-          setBusy(true); setError("");
-          try { await onDeleteDomain(domainId); onClose(); }
-          catch (err) { setError(err.message); }
-          finally { setBusy(false); }
-        }}>Remove domain</button> : null}<button type="button" onClick={onClose} disabled={busy}>Cancel</button><button type="submit" className="org-primary" disabled={busy}>{busy ? "Saving…" : "Save"}</button></footer>
-      </form>
-    </Dialog>
-  );
-}
-
 export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onLock, applyRoadmap, refetch }) {
   const model = useMemo(() => buildOrganization(data), [data]);
   const [tab, setTab] = useState("domains");
@@ -220,7 +168,6 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
     setNotice("Saved.");
   };
   const save = async (row) => applyResult(await saveOrgAssignment({ ...row, adminToken }));
-  const saveReference = async (kind, values) => applyResult(await (kind === "domain" ? saveOrgDomain : kind === "team" ? saveOrgTeam : kind === "role" ? saveOrgRole : saveOrgOrganization)({ ...values, label: values.name, adminToken }));
   const remove = async (row) => {
     if (!window.confirm(`Remove this ${row.role} assignment for ${row.domainName}? Other assignments are not affected.`)) return;
     setBusy(true); setError("");
@@ -289,8 +236,8 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
             catch (err) { setError(err.message); }
             finally { setBusy(false); }
           }}>Refresh</button>
-          {sheetUrl ? <a href={sheetUrl} target="_blank" rel="noopener noreferrer">Open workbook</a> : null}
-          {adminUnlocked && ready ? <><button type="button" onClick={() => setModal({ kind: "references" })}>Domains, teams, roles & partners</button><button type="button" className="org-primary" onClick={() => setModal({ kind: "assignment", entry: filters.domain ? { domain: filters.domain } : null })}>+ Add assignment</button></> : null}
+          {sheetUrl ? <a className="org-workbook-button" href={sheetUrl} target="_blank" rel="noopener noreferrer">Open workbook</a> : null}
+          {adminUnlocked && ready ? <button type="button" className="org-primary" onClick={() => setModal({ kind: "assignment", entry: filters.domain ? { domain: filters.domain } : null })}>+ Add assignment</button> : null}
         </div>
       </header>
       {isLocalMode() ? <p role="status" className="org-callout"><strong>Local preview only.</strong> Data is stored in this browser, not your live Google Sheet. Domain choices are a local snapshot, not a live sync. Preview edits cannot change the live workbook.</p> : null}
@@ -381,7 +328,6 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         <p>Names and assignments have the same viewing access as the rest of the Toolbox. Edits require the existing admin token.</p>
       </footer>
       {modal?.kind === "assignment" ? <AssignmentForm entry={modal.entry} model={model} onSave={save} onClose={() => setModal(null)} /> : null}
-      {modal?.kind === "references" ? <ReferenceForm model={model} onSave={saveReference} onDeleteDomain={async (id) => applyResult(await deleteOrgDomain({ id, adminToken }))} onClose={() => setModal(null)} /> : null}
     </div>
   );
 }
