@@ -17,6 +17,7 @@ export const ROUTES = [
   { id: "table", path: "projects", title: "Projects" },
   { id: "incidents", path: "operations", title: "Communities Operations Timeline" },
   { id: "sites", path: "cookiebot", title: "Cookiebot" },
+  { id: "org", path: "prod-eng-org", title: "Communities Eng & Product Organization" },
   { id: "settings", path: "settings", title: "Settings" },
 ];
 

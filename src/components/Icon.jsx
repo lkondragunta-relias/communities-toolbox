@@ -54,6 +54,14 @@ const S = {
       <line x1="12" y1="9" x2="12" y2="14" />
     </>
   ),
+  organization: (
+    <>
+      <rect x="9" y="3" width="6" height="5" rx="1" />
+      <path d="M12 8v4M5 16v-4h14v4" />
+      <rect x="2" y="16" width="6" height="5" rx="1" />
+      <rect x="16" y="16" width="6" height="5" rx="1" />
+    </>
+  ),
   settings: (
     <>
       <line x1="4" y1="7" x2="20" y2="7" />

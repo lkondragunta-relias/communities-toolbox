@@ -87,6 +87,13 @@ function doPostLocked_(e) {
     if (action === 'resolveincident') return jsonResponse(resolveIncident_(body));
     if (action === 'listopenincidents') return jsonResponse(listOpenIncidents_());
     if (action === 'setupincidentconfig') return jsonResponse(setupIncidentConfig_());
+    if (action === 'saveorgassignment') return jsonResponse(saveOrgAssignment_(body));
+    if (action === 'deleteorgassignment') return jsonResponse(deleteOrgAssignment_(body));
+    if (action === 'saveorgrole') return jsonResponse(saveOrgDefinition_(body, true));
+    if (action === 'saveorgorganization') return jsonResponse(saveOrgDefinition_(body, false));
+    if (action === 'saveorgdomain') return jsonResponse(saveOrgDomain_(body));
+    if (action === 'saveorgteam') return jsonResponse(saveOrgTeam_(body));
+    if (action === 'deleteorgdomain') return jsonResponse(deleteOrgDomain_(body));
 
     if (action === 'addcookiebotsite') return jsonResponse(addCookiebotSite_(body));
     if (action === 'deletecookiebotsite') return jsonResponse(deleteCookiebotSite_(body));
@@ -223,6 +230,7 @@ function readRoadmap_() {
     priorities: readPriorities_(),
     incidents: readIncidents_(),
     incidentConfig: readIncidentConfig_(),
+    org: readOrg_(),
     cookiebotSites: readCookiebotSites_(),
     cookiebotReports: readCookiebotReports_(),
   };
@@ -506,6 +514,9 @@ function addTeam_(body) {
 function deleteTeam_(body) {
   var id = String(body.teamId || body.id || '').trim();
   if (!id) throw new Error('Team Id is required.');
+  if (readOrg_().assignments.some(function (row) { return normalize_(row.team) === normalize_(id); })) {
+    throw new Error('Cannot delete team: remove its Prod Eng Org assignments first.');
+  }
   var usage = countProjectsUsingTeam_(id);
   if (usage > 0) {
     throw new Error('Cannot delete team "' + id + '": used by ' + usage + ' project(s).');
@@ -544,7 +555,7 @@ function addDomain_(body) {
   if (!name) throw new Error('Domain name is required.');
   if (!id) throw new Error('Domain id could not be derived.');
   var reserved = ['meta', 'quarters', 'teams', 'cohorts', 'statuses', 'priorities',
-    'cookiebotsites', 'cookiebotreports'];
+    'cookiebotsites', 'cookiebotreports', 'org'];
   if (reserved.indexOf(id) >= 0) {
     throw new Error('"' + name + '" is a reserved name - pick a different one.');
   }
@@ -562,6 +573,9 @@ function addDomain_(body) {
 function deleteDomain_(body) {
   var id = String(body.id || '').trim().toLowerCase();
   if (!id) throw new Error('Domain id is required.');
+  if (readOrg_().assignments.some(function (row) { return normalize_(row.domain) === normalize_(id); })) {
+    throw new Error('Cannot delete domain: remove its Prod Eng Org assignments first.');
+  }
   var sheet = requireSheetByKeyword_('domain', 'Domains');
   var idC = colOf_(headerMap_(sheet), ['title', 'id']);
   var rowIndex = findRowByValue_(sheet, idC, id);
@@ -1062,6 +1076,7 @@ function onOpen() {
     .createMenu('Communities Toolbox')
     .addItem('Set up Incident Config tab', 'setupIncidentConfigSheet')
     .addItem('Set up Incidents tab', 'setupIncidentsSheet')
+    .addItem('Set up Prod Eng Org tab', 'setupProdEngOrgSheet')
     .addToUi();
 }
 
@@ -1499,6 +1514,360 @@ function deleteCookiebotReport_(body) {
 }
 
 /* ================================ Plumbing ================================ */
+
+/* ======================= Communities Prod & Eng Org ======================= */
+
+var ORG_SHEET_NAME = 'Prod Eng Org';
+var ORG_FIELDS = ['id', 'domain', 'personId', 'personName', 'role', 'team', 'organization', 'status', 'notes'];
+var ORG_HEADERS = ['ID', 'Domain', 'Person ID', 'Person Name', 'Role', 'Team', 'Organization', 'Position Status', 'Notes'];
+var ORG_CATEGORIES = ['Eng leader', 'PM', 'UX', 'ENG Team members', 'Team & Partners'];
+var ORG_DEFAULT_ROLES = [
+  ['Eng leader', 'Eng leader'], ['PM', 'PM'], ['UX', 'UX'],
+  ['Engineer', 'ENG Team members'], ['QA', 'ENG Team members'], ['Team member', 'ENG Team members'], ['Team & Partners', 'Team & Partners'],
+];
+var ORG_DEFAULT_ORGANIZATIONS = [
+  ['Relias', '#15803d'], ['BrillMark', '#2563eb'], ['Radicle', '#9333ea'], ['Zaengle', '#c2410c'],
+];
+
+function orgSheet_() {
+  return ss_().getSheetByName(ORG_SHEET_NAME);
+}
+
+function orgColumns_(sheet) {
+  var headers = headerMap_(sheet);
+  var columns = {};
+  ORG_FIELDS.forEach(function (key, index) {
+    columns[key] = colOf_(headers, [normalize_(ORG_HEADERS[index])]);
+    if (!columns[key]) throw new Error('Missing "' + ORG_HEADERS[index] + '" in Prod Eng Org. Run setupProdEngOrgSheet.');
+  });
+  return columns;
+}
+
+function orgAssignmentKey_(row) {
+  return row.id || 'sheet:' + JSON.stringify(ORG_FIELDS.slice(1).map(function (field) { return row[field] || ''; }));
+}
+
+function orgRows_(sheet) {
+  var columns = orgColumns_(sheet);
+  if (sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues()
+    .map(function (values, index) {
+      var row = { _row: index + 2 };
+      ORG_FIELDS.forEach(function (field) { row[field] = String(cell_(values, columns[field]) || '').trim(); });
+      return row;
+    }).filter(function (row) {
+      return ORG_FIELDS.some(function (field) { return Boolean(row[field]); });
+    });
+}
+
+function orgDefinitions_(sheet, firstCol, secondCol, secondKey) {
+  if (sheet.getLastRow() < 2) return [];
+  var map = headerMap_(sheet);
+  var nameCol = map[firstCol];
+  var valueCol = map[secondCol];
+  if (!nameCol || !valueCol) throw new Error('Missing organization reference columns. Run setupProdEngOrgSheet.');
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues()
+    .filter(function (row) { return String(cell_(row, nameCol)).trim(); })
+    .map(function (row) {
+      var entry = { name: String(cell_(row, nameCol)).trim() };
+      entry[secondKey] = String(cell_(row, valueCol) || '').trim();
+      return entry;
+    });
+}
+
+function readOrgDomains_(sheet) {
+  var map = headerMap_(sheet);
+  if (!map['domain id'] || !map['domain name'] || !map['domain order']) {
+    throw new Error('Run setupProdEngOrgSheet to create the organization-only domain list.');
+  }
+  if (sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues()
+    .map(function (row, index) {
+      var id = String(cell_(row, map['domain id']) || '').trim();
+      var name = String(cell_(row, map['domain name']) || '').trim();
+      var order = String(cell_(row, map['domain order']) || '').trim();
+      if (!id) return null;
+      if (order && !isFinite(Number(order))) throw new Error('Invalid Domain Order on Prod Eng Org row ' + (index + 2) + '. Use a number.');
+      return { id: id, name: name || id, order: order ? Number(order) : index + 1 };
+    }).filter(function (row) { return row !== null; })
+    .sort(function (a, b) { return a.order - b.order; });
+}
+
+function saveOrgDomain_(body) {
+  var sheet = requireOrgSheet_();
+  var id = String(body.id || '').trim();
+  var name = String(body.name || '').trim();
+  var order = String(body.order == null ? '' : body.order).trim();
+  if (!id || !name || !order || !isFinite(Number(order))) throw new Error('Domain ID, name, and numeric order are required.');
+  if (/^[=+@-]/.test(id) || /^[=+@-]/.test(name)) throw new Error('Use plain-text domain identifiers and names.');
+  var columns = headerMap_(sheet);
+  if (!columns['domain id'] || !columns['domain name'] || !columns['domain order']) throw new Error('Run setupProdEngOrgSheet first.');
+  var target = findRowByValue_(sheet, columns['domain id'], id);
+  if (target < 2) {
+    var values = sheet.getRange(2, columns['domain id'], Math.max(1, sheet.getLastRow() - 1), 1).getDisplayValues();
+    target = 2;
+    values.forEach(function (row, index) { if (row[0]) target = index + 3; });
+  }
+  if (target > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), target - sheet.getMaxRows());
+  sheet.getRange(target, columns['domain id']).setValue(id);
+  sheet.getRange(target, columns['domain name']).setValue(name);
+  sheet.getRange(target, columns['domain order']).setValue(Number(order));
+  return { ok: true, org: readOrg_() };
+}
+
+function readOrgTeams_(sheet) {
+  var columns = headerMap_(sheet);
+  if (!columns['team id'] && !columns['team label']) return readTeams_();
+  return orgDefinitions_(sheet, 'team id', 'team label', 'label').map(function (entry) {
+    return { id: entry.name, label: entry.label || entry.name };
+  });
+}
+
+function saveOrgTeam_(body) {
+  var sheet = requireOrgSheet_();
+  var id = String(body.id || '').trim();
+  var label = String(body.label || '').trim();
+  if (!id || !label || /^[=+@-]/.test(id) || /^[=+@-]/.test(label)) throw new Error('Plain-text team ID and label are required.');
+  var columns = headerMap_(sheet);
+  if (!columns['team id'] || !columns['team label']) throw new Error('Run setupProdEngOrgSheet to create the organization-only team list.');
+  var target = findRowByValue_(sheet, columns['team id'], id);
+  if (target < 2) {
+    target = 2;
+    sheet.getRange(2, columns['team id'], Math.max(1, sheet.getLastRow() - 1), 1).getDisplayValues().forEach(function (row, index) {
+      if (row[0]) target = index + 3;
+    });
+  }
+  if (target > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), target - sheet.getMaxRows());
+  sheet.getRange(target, columns['team id']).setValue(id);
+  sheet.getRange(target, columns['team label']).setValue(label);
+  return { ok: true, org: readOrg_() };
+}
+
+function deleteOrgDomain_(body) {
+  var sheet = requireOrgSheet_();
+  var id = String(body.id || '').trim();
+  var org = readOrg_();
+  if (org.assignments.some(function (row) { return row.domain === id; })) throw new Error('Remove this domain\'s organization assignments first.');
+  var columns = headerMap_(sheet);
+  var target = findRowByValue_(sheet, columns['domain id'], id);
+  if (target < 2) throw new Error('Organization domain no longer exists. Refresh and retry.');
+  ['domain id', 'domain name', 'domain order'].forEach(function (key) { sheet.getRange(target, columns[key]).clearContent(); });
+  return { ok: true, org: readOrg_() };
+}
+
+function readOrg_() {
+  var sheet = orgSheet_();
+  if (!sheet) return { configured: false, assignments: [], roles: [], organizations: [] };
+  var domains = readOrgDomains_(sheet);
+  var teams = readOrgTeams_(sheet);
+  var roles = orgDefinitions_(sheet, 'role option', 'role category', 'category');
+  var organizations = orgDefinitions_(sheet, 'organization option', 'badge color', 'color');
+  return {
+    configured: true,
+    domains: domains,
+    teams: teams,
+    assignments: orgRows_(sheet).map(function (row) {
+      var entry = {};
+      ORG_FIELDS.forEach(function (field) { entry[field] = row[field]; });
+      entry.id = orgAssignmentKey_(row);
+      entry.domain = orgCanonical_(entry.domain, domains, 'name');
+      entry.team = entry.team ? orgCanonical_(entry.team, teams, 'label') : '';
+      entry.role = orgCanonical_(entry.role, roles, 'name');
+      entry.organization = orgCanonical_(entry.organization, organizations, 'name');
+      entry.status = ({ assigned: 'Assigned', open: 'Open', 'not applicable': 'Not applicable' })[normalize_(entry.status)] || entry.status;
+      return entry;
+    }),
+    roles: roles,
+    organizations: organizations,
+  };
+}
+
+/** Safe to run from the editor without deploying the web app. Never resets rows. */
+function setupProdEngOrgSheet() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    var book = ss_();
+    var sheet = orgSheet_() || book.insertSheet(ORG_SHEET_NAME);
+    ensureColumnCount_(sheet, 22);
+    var headers = ORG_HEADERS.concat(['', 'Role Option', 'Role Category', '', 'Organization Option', 'Badge Color', '', 'Domain ID', 'Domain Name', 'Domain Order', '', 'Team ID', 'Team Label']);
+    var current = sheet.getRange(1, 1, 1, 22).getDisplayValues()[0];
+    headers.forEach(function (header, index) {
+      if (header && current[index] && normalize_(current[index]) !== normalize_(header)) {
+        throw new Error('Unexpected header at column ' + (index + 1) + '. Setup stopped without replacing any data.');
+      }
+    });
+    var seedRoles = !current[10];
+    var seedOrganizations = !current[13];
+    var seedDomains = !current[16];
+    var seedTeams = !current[20];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    if (seedRoles) sheet.getRange(2, 11, ORG_DEFAULT_ROLES.length, 2).setValues(ORG_DEFAULT_ROLES);
+    if (seedOrganizations) sheet.getRange(2, 14, ORG_DEFAULT_ORGANIZATIONS.length, 2).setValues(ORG_DEFAULT_ORGANIZATIONS);
+    if (seedDomains) {
+      var sourceDomains = readDomains_();
+      if (sourceDomains.length) sheet.getRange(2, 17, sourceDomains.length, 3).setValues(sourceDomains.map(function (domain, index) {
+        return [domain.id, domain.name, index + 1];
+      }));
+    }
+    if (seedTeams) {
+      var sourceTeams = readTeams_();
+      if (sourceTeams.length) sheet.getRange(2, 21, sourceTeams.length, 2).setValues(sourceTeams.map(function (team) {
+        return [team.id, team.label];
+      }));
+    }
+    var rows = sheet.getMaxRows() - 1;
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, 22).setFontWeight('bold').setBackground('#164e3f').setFontColor('#ffffff');
+    sheet.getRange(2, 1, rows, 9).setNumberFormat('@');
+    sheet.setColumnWidths(1, 22, 165);
+    sheet.setColumnWidth(9, 300);
+    var definitions = [
+      [5, sheet.getRange(2, 11, rows, 1)], [7, sheet.getRange(2, 14, rows, 1)],
+    ];
+    definitions.push([2, sheet.getRange(2, 17, rows, 1)]);
+    definitions.push([6, sheet.getRange(2, 21, rows, 1)]);
+    definitions.forEach(function (def) {
+      sheet.getRange(2, def[0], rows, 1).setDataValidation(
+        SpreadsheetApp.newDataValidation().requireValueInRange(def[1], true).setAllowInvalid(false).build()
+      );
+    });
+    sheet.getRange(2, 8, rows, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(['Assigned', 'Open', 'Not applicable'], true).setAllowInvalid(false).build()
+    );
+    sheet.getRange(2, 12, rows, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(ORG_CATEGORIES, true).setAllowInvalid(false).build()
+    );
+    var after = getIncidentConfigSheet_();
+    if (after) {
+      book.setActiveSheet(sheet);
+      book.moveActiveSheet(after.getIndex() + (sheet.getIndex() < after.getIndex() ? 0 : 1));
+    }
+    return 'Prod Eng Org ready. Run a new web app deployment to publish the API changes.';
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function requireOrgSheet_() {
+  var sheet = orgSheet_();
+  if (!sheet) throw new Error('Run setupProdEngOrgSheet in the spreadsheet first.');
+  return sheet;
+}
+
+function orgCanonical_(value, choices, labelKey) {
+  var match = choices.filter(function (choice) {
+    return normalize_(choice.id || choice.name) === normalize_(value) || normalize_(choice[labelKey]) === normalize_(value);
+  })[0];
+  return match ? String(match.id || match.name) : String(value || '').trim();
+}
+
+function validateOrgRow_(row, org) {
+  var domains = org.domains || [];
+  var teams = org.teams || readTeams_();
+  row.domain = orgCanonical_(row.domain, domains, 'name');
+  row.team = row.team ? orgCanonical_(row.team, teams, 'label') : '';
+  row.role = orgCanonical_(row.role, org.roles, 'name');
+  row.organization = orgCanonical_(row.organization, org.organizations, 'name');
+  if (!domains.some(function (d) { return d.id === row.domain; })) throw new Error('Choose a domain from the Prod Eng Org domain list (columns Q-S).');
+  var role = org.roles.filter(function (r) { return r.name === row.role; })[0];
+  if (!role || ORG_CATEGORIES.indexOf(role.category) < 0) throw new Error('Choose a role with a valid category.');
+  if (['Assigned', 'Open', 'Not applicable'].indexOf(row.status) < 0) throw new Error('Position status must be Assigned, Open, or Not applicable.');
+  if (role.category === 'UX' && org.assignments.some(function (other) {
+    var otherRole = org.roles.filter(function (r) { return r.name === other.role; })[0];
+    return other.id !== row.id && other.domain === row.domain && otherRole && otherRole.category === 'UX' &&
+      (row.status === 'Not applicable' || other.status === 'Not applicable');
+  })) throw new Error('A domain cannot have both a UX assignment and an explicit None, or multiple None entries.');
+  if (row.status === 'Not applicable') {
+    if (role.category !== 'UX' || row.personName || row.personId || row.team || row.organization) throw new Error('Not applicable is only for UX with no person, team, or organization.');
+    return;
+  }
+  if (!org.organizations.some(function (o) { return o.name === row.organization; })) throw new Error('Choose a configured organization.');
+  if (row.team && !teams.some(function (t) { return t.id === row.team; })) throw new Error('Choose a team from the organization team list.');
+  if (role.category === 'Team & Partners') {
+    if (!row.team || row.personName || row.personId || row.status !== 'Assigned') throw new Error('Team allocations require a team, no person, and Assigned status.');
+  } else {
+    if (row.status === 'Assigned' && !row.personName) throw new Error('Person Name is required.');
+    if (row.status === 'Open' && (row.personName || row.personId)) throw new Error('Open positions must not contain a person.');
+    if (role.category === 'ENG Team members' && !row.team) throw new Error('Engineering members require a team.');
+  }
+  org.assignments.forEach(function (other) {
+    if (other.id === row.id) return;
+    if (row.personId && row.personId === other.personId &&
+        (normalize_(row.personName) !== normalize_(other.personName) || normalize_(row.organization) !== normalize_(other.organization))) {
+      throw new Error('This Person ID has a different name or organization. Reuse the existing details.');
+    }
+    var samePerson = row.personId && other.personId ? row.personId === other.personId :
+      normalize_(row.personName) === normalize_(other.personName);
+    if (row.status === 'Assigned' && other.status === 'Assigned' && samePerson &&
+        normalize_(other.domain) === normalize_(row.domain) && normalize_(other.role) === normalize_(row.role) &&
+        normalize_(other.team) === normalize_(row.team) && normalize_(other.organization) === normalize_(row.organization)) {
+      throw new Error('This assignment already exists.');
+    }
+  });
+}
+
+function saveOrgAssignment_(body) {
+  var sheet = requireOrgSheet_();
+  var org = readOrg_();
+  var row = {};
+  ORG_FIELDS.forEach(function (field) { row[field] = String(body[field] || '').trim(); });
+  var matches = row.id ? orgRows_(sheet).filter(function (entry) { return orgAssignmentKey_(entry) === row.id; }) : [];
+  if (matches.length > 1) throw new Error('Duplicate assignment ID. Give each row a unique ID in the sheet.');
+  var existing = matches[0] || null;
+  if (row.id && !existing) throw new Error('Assignment changed or no longer exists. Refresh and retry.');
+  validateOrgRow_(row, org);
+  if (!row.id || row.id.indexOf('sheet:') === 0) row.id = Utilities.getUuid();
+  var columns = orgColumns_(sheet);
+  var target = existing ? existing._row : Math.max(2, lastOrgAssignmentRow_(sheet) + 1);
+  if (target > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), target - sheet.getMaxRows());
+  ORG_FIELDS.forEach(function (field) {
+    // Keep user-entered names and notes as literal text, never sheet formulas.
+    sheet.getRange(target, columns[field]).setValue(/^[=+@-]/.test(row[field]) ? "'" + row[field] : row[field]);
+  });
+  return { ok: true, org: readOrg_() };
+}
+
+function lastOrgAssignmentRow_(sheet) {
+  var rows = orgRows_(sheet);
+  return rows.length ? rows[rows.length - 1]._row : 1;
+}
+
+function deleteOrgAssignment_(body) {
+  var sheet = requireOrgSheet_();
+  var matches = orgRows_(sheet).filter(function (row) { return orgAssignmentKey_(row) === String(body.id || '').trim(); });
+  if (matches.length > 1) throw new Error('Duplicate assignment ID. Give each row a unique ID in the sheet.');
+  var entry = matches[0];
+  if (!entry) throw new Error('Assignment changed or no longer exists. Refresh and retry.');
+  var columns = orgColumns_(sheet);
+  ORG_FIELDS.forEach(function (field) { sheet.getRange(entry._row, columns[field]).clearContent(); });
+  return { ok: true, org: readOrg_() };
+}
+
+function saveOrgDefinition_(body, isRole) {
+  var sheet = requireOrgSheet_();
+  var name = String(body.name || '').trim();
+  if (!name || /^[=+@-]/.test(name)) throw new Error('Enter a plain-text name.');
+  var value = String(isRole ? body.category || '' : body.color || '').trim();
+  if (isRole && ORG_CATEGORIES.indexOf(value) < 0) throw new Error('Choose a valid role category.');
+  if (!isRole && !/^#[0-9a-f]{6}$/i.test(value)) throw new Error('Use a six-digit hex color.');
+  if (!isRole && normalize_(name) === 'relias') value = '#15803d';
+  var map = headerMap_(sheet);
+  var nameColumn = map[isRole ? 'role option' : 'organization option'];
+  var valueColumn = map[isRole ? 'role category' : 'badge color'];
+  if (!nameColumn || !valueColumn) throw new Error('Run setupProdEngOrgSheet first.');
+  var existing = findRowByValue_(sheet, nameColumn, name);
+  var target = existing;
+  if (target < 2) {
+    var entries = sheet.getRange(2, nameColumn, Math.max(1, sheet.getLastRow() - 1), 1).getDisplayValues();
+    target = 2;
+    entries.forEach(function (entry, index) { if (entry[0]) target = index + 3; });
+  }
+  if (target > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), target - sheet.getMaxRows());
+  if (existing < 2) sheet.getRange(target, nameColumn).setValue(name);
+  sheet.getRange(target, valueColumn).setValue(value);
+  return { ok: true, org: readOrg_() };
+}
 
 function parsePostBody_(e) {
   if (!e || !e.postData || !e.postData.contents) {

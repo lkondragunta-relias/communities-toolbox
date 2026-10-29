@@ -11,6 +11,7 @@ export const RESERVED_DATA_KEYS = new Set([
   "cookiebotSites",
   "cookiebotReports",
   "incidents",
+  "org",
 ]);
 export const DEFAULT_INITIATIVE_COLOR = "#64748b";
 

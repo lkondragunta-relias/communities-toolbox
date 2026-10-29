@@ -14,6 +14,7 @@ import ProjectsTable from "./components/ProjectsTable";
 import OverviewView from "./components/views/OverviewView";
 import IncidentsView from "./components/views/IncidentsView";
 import SitesView from "./components/views/SitesView";
+import OrgView from "./components/views/OrgView";
 import SettingsView from "./components/views/SettingsView";
 import ProjectDetail from "./components/ProjectDetail";
 import InitiativeTooltip from "./components/InitiativeTooltip";
@@ -42,7 +43,7 @@ import {
 const VIEW_TITLES = Object.fromEntries(ROUTES.map((r) => [r.id, r.title]));
 
 /** Views that own their own header actions, so the topbar Add button hides. */
-const SELF_MANAGED_VIEWS = new Set(["incidents", "sites", "settings"]);
+const SELF_MANAGED_VIEWS = new Set(["incidents", "sites", "org", "settings"]);
 
 const SIDEBAR_STORAGE_KEY = "roadmap_sidebar_collapsed";
 
@@ -432,6 +433,16 @@ export default function App() {
                 adminUnlocked={adminUnlocked}
                 data={data}
                 adminToken={adminToken}
+                refetch={refetch}
+              />
+            ) : view === "org" ? (
+              <OrgView
+                data={data}
+                adminUnlocked={adminUnlocked}
+                adminToken={adminToken}
+                onUnlock={handleAdminUnlock}
+                onLock={handleAdminLock}
+                applyRoadmap={applyRoadmap}
                 refetch={refetch}
               />
             ) : view === "settings" ? (
