@@ -11,6 +11,7 @@
 import Dexie from "dexie";
 import { DEFAULT_STATUSES } from "../config/statusConfig";
 import { DEFAULT_PRIORITIES } from "../config/priorityConfig";
+import { DEFAULT_ORG_ROLES, DEFAULT_ORGANIZATIONS, ORG_FIELDS, ORG_CATEGORIES, validateOrgAssignment } from "../config/orgConfig.js";
 
 export const LOCAL_ADMIN_TOKEN =
   (import.meta.env.VITE_LOCAL_ADMIN_TOKEN || "local-dev").trim();
@@ -85,6 +86,24 @@ db.version(6).upgrade(async (tx) => {
       return tx.table("incidents").put({ ...row, cause: seedCauses[row.id] || "" });
     })
   );
+});
+
+db.version(7).stores({
+  orgAssignments: "id, personId, domain",
+  orgRoles: "name",
+  orgOrganizations: "name",
+}).upgrade(async (tx) => {
+  await tx.table("orgRoles").bulkAdd(DEFAULT_ORG_ROLES.map((row) => ({ ...row })));
+  await tx.table("orgOrganizations").bulkAdd(DEFAULT_ORGANIZATIONS.map((row) => ({ ...row })));
+});
+
+db.version(8).stores({ orgDomains: "id, order" }).upgrade(async (tx) => {
+  const domains = await tx.table("domains").toArray();
+  await tx.table("orgDomains").bulkAdd(domains.map((domain, index) => ({ ...domain, order: index + 1 })));
+});
+
+db.version(9).stores({ orgTeams: "id" }).upgrade(async (tx) => {
+  await tx.table("orgTeams").bulkAdd(await tx.table("teams").toArray());
 });
 
 function projectKey(domain, id) {
@@ -226,6 +245,10 @@ const SEED_INCIDENTS = [
 ];
 
 db.on("populate", () => {
+  db.orgTeams.bulkAdd(SEED_TEAMS.map((team) => ({ ...team })));
+  db.orgDomains.bulkAdd(SEED_DOMAINS.map((domain, index) => ({ ...domain, order: index + 1 })));
+  db.orgRoles.bulkAdd(DEFAULT_ORG_ROLES.map((row) => ({ ...row })));
+  db.orgOrganizations.bulkAdd(DEFAULT_ORGANIZATIONS.map((row) => ({ ...row })));
   db.incidents.bulkAdd(SEED_INCIDENTS.map((i) => ({ ...i })));
   db.teams.bulkAdd(SEED_TEAMS.map((t) => ({ ...t })));
   db.projects.bulkAdd(
@@ -287,6 +310,7 @@ export async function getRoadmap() {
     domain: s.domain || s.url || "",
   }));
   payload.incidents = incidents.map((i) => ({ ...i }));
+  payload.org = await readLocalOrg();
   payload.cookiebotReports = reports.map((r) => ({
     site: r.site || "",
     fileName: r.fileName || "",
@@ -295,6 +319,61 @@ export async function getRoadmap() {
     data: r.data || r.summary || null,
   }));
   return payload;
+}
+
+async function readLocalOrg() {
+  const [assignments, roles, organizations, domains, teams] = await Promise.all([
+    db.orgAssignments.toArray(), db.orgRoles.toArray(), db.orgOrganizations.toArray(), db.orgDomains.orderBy("order").toArray(), db.orgTeams.toArray(),
+  ]);
+  return { configured: true, assignments, roles, organizations, domains, teams };
+}
+
+async function writeLocalOrg(payload) {
+  return db.transaction("rw", db.orgAssignments, db.orgRoles, db.orgOrganizations, db.orgDomains, db.orgTeams, async () => {
+    const org = await readLocalOrg();
+    const action = payload.action.toLowerCase();
+    if (action === "saveorgdomain") {
+      const id = String(payload.id || "").trim();
+      const name = String(payload.name || "").trim();
+      if (!id || !name || !Number.isFinite(Number(payload.order)) || String(payload.order).trim() === "") throw new Error("Domain ID, name, and numeric order are required.");
+      await db.orgDomains.put({ id, name, order: Number(payload.order) });
+    } else if (action === "deleteorgdomain") {
+      const id = String(payload.id || "").trim();
+      if (!org.domains.some((domain) => domain.id === id)) throw new Error("Organization domain no longer exists. Refresh and retry.");
+      if (org.assignments.some((row) => row.domain === id)) throw new Error("Remove this domain's organization assignments first.");
+      await db.orgDomains.delete(id);
+    } else if (action === "saveorgteam") {
+      const id = String(payload.id || "").trim();
+      const label = String(payload.label || "").trim();
+      if (!id || !label || /^[=+@-]/.test(id) || /^[=+@-]/.test(label)) throw new Error("Plain-text team ID and label are required.");
+      await db.orgTeams.put({ id, label });
+    } else if (action === "saveorgrole" || action === "saveorgorganization") {
+      const name = String(payload.name || "").trim();
+      if (!name) throw new Error("Name is required.");
+      const isRole = action === "saveorgrole";
+      if (isRole && !ORG_CATEGORIES.includes(payload.category)) throw new Error("Choose a valid role category.");
+      if (!isRole && !/^#[0-9a-f]{6}$/i.test(payload.color)) throw new Error("Use a six-digit hex color.");
+      const table = isRole ? db.orgRoles : db.orgOrganizations;
+      const existing = (isRole ? org.roles : org.organizations).find((row) => row.name.toLowerCase() === name.toLowerCase());
+      await table.put(isRole
+        ? { name: existing?.name || name, category: payload.category }
+        : { name: existing?.name || name, color: name.toLowerCase() === "relias" ? "#15803d" : payload.color });
+    } else {
+      const id = String(payload.id || "").trim();
+      if (id && !await db.orgAssignments.get(id)) throw new Error("Assignment no longer exists. Refresh and retry.");
+      if (action === "deleteorgassignment") {
+        if (!id) throw new Error("Assignment ID is required.");
+        await db.orgAssignments.delete(id);
+      } else {
+        const row = Object.fromEntries(ORG_FIELDS.map((key) => [key, String(payload[key] || "").trim()]));
+        const error = validateOrgAssignment(row, org);
+        if (error) throw new Error(error);
+        row.id ||= crypto.randomUUID();
+        await db.orgAssignments.put(row);
+      }
+    }
+    return { ok: true, org: await readLocalOrg() };
+  });
 }
 
 function parseTeams(value) {
@@ -404,6 +483,9 @@ async function updateIncidentRow(payload) {
 /** Mirror of the remote POST handler; mutates the DB. (Local mode has no auth.) */
 export async function postToLocal(payload) {
   const action = String(payload.action || "add").trim().toLowerCase();
+  if (["saveorgassignment", "deleteorgassignment", "saveorgrole", "saveorgorganization", "saveorgdomain", "saveorgteam", "deleteorgdomain"].includes(action)) {
+    return writeLocalOrg(payload);
+  }
   if (action === "addteam") {
     await createTeam({
       id: payload.teamId,
@@ -585,12 +667,16 @@ export async function createDomain(name) {
   if (!clean) throw new Error("Domain name is required.");
   const id = slug(clean);
   if (!id) throw new Error("Domain name must contain letters or numbers.");
+  if (id === "org") throw new Error('"Org" is a reserved domain name.');
   if (await db.domains.get(id)) throw new Error(`Domain already exists: ${clean}`);
   await db.domains.add({ id, name: clean });
   return id;
 }
 
 export async function deleteDomain(id) {
+  if (await db.orgAssignments.where("domain").equals(id).count()) {
+    throw new Error("Cannot delete domain: remove its Prod Eng Org assignments first.");
+  }
   const count = await projectsUsingDomain(id);
   if (count > 0) {
     throw new Error(`Cannot delete: ${count} project(s) still use this domain.`);
@@ -613,6 +699,10 @@ export async function createTeam({ id: explicitId, name, color }) {
 }
 
 export async function deleteTeamById(id) {
+  const orgAssignments = await db.orgAssignments.toArray();
+  if (orgAssignments.some((row) => row.team.toLowerCase() === String(id).toLowerCase())) {
+    throw new Error("Cannot delete team: remove its Prod Eng Org assignments first.");
+  }
   const projects = await db.projects.toArray();
   const used = projects.some((p) =>
     parseTeams(p.teams).some((t) => t.toLowerCase() === String(id).toLowerCase())

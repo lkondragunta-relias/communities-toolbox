@@ -107,6 +107,7 @@ export function normalizeRemotePayload(payload) {
   if (Array.isArray(payload.cookiebotSites)) out.cookiebotSites = payload.cookiebotSites;
   if (Array.isArray(payload.cookiebotReports)) out.cookiebotReports = payload.cookiebotReports;
   if (Array.isArray(payload.incidents)) out.incidents = payload.incidents;
+  if (payload.org && typeof payload.org === "object") out.org = payload.org;
   if (payload.incidentConfig && typeof payload.incidentConfig === "object") {
     out.incidentConfig = payload.incidentConfig;
   }
@@ -308,6 +309,34 @@ export async function deleteCookiebotReport({ adminToken, site, fileName, upload
     fileName: String(fileName || "").trim(),
     uploaded: String(uploaded || "").trim(),
   });
+}
+
+export function saveOrgAssignment({ adminToken, ...entry }) {
+  return postToSheetsApi({ action: "saveOrgAssignment", adminToken, ...entry });
+}
+
+export function deleteOrgAssignment({ adminToken, id }) {
+  return postToSheetsApi({ action: "deleteOrgAssignment", adminToken, id });
+}
+
+export function saveOrgRole({ adminToken, name, category }) {
+  return postToSheetsApi({ action: "saveOrgRole", adminToken, name, category });
+}
+
+export function saveOrgOrganization({ adminToken, name, color }) {
+  return postToSheetsApi({ action: "saveOrgOrganization", adminToken, name, color });
+}
+
+export function saveOrgDomain({ adminToken, id, name, order }) {
+  return postToSheetsApi({ action: "saveOrgDomain", adminToken, id, name, order });
+}
+
+export function saveOrgTeam({ adminToken, id, label }) {
+  return postToSheetsApi({ action: "saveOrgTeam", adminToken, id, label });
+}
+
+export function deleteOrgDomain({ adminToken, id }) {
+  return postToSheetsApi({ action: "deleteOrgDomain", adminToken, id });
 }
 
 /* ------------------ Operations timeline (Incidents tab) ------------------ */
@@ -535,4 +564,3 @@ export function validateTeamForm({ teamId, teamName, color }) {
 
   return { errors, valid: Object.keys(errors).length === 0 };
 }
-

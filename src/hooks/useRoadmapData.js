@@ -15,7 +15,7 @@ export function useRoadmapData() {
   const loadIdRef = useRef(0);
 
   const load = useCallback(async (signal, options = {}) => {
-    const { skipCache = false } = options;
+    const { skipCache = false, throwOnError = false } = options;
     const loadId = ++loadIdRef.current;
     const isStale = () => signal?.aborted || loadIdRef.current !== loadId;
     setError(null);
@@ -63,6 +63,7 @@ export function useRoadmapData() {
           `Could not load roadmap (${err.message}). Showing no data — check your connection or VITE_SHEETS_API_URL.`
         );
       }
+      if (throwOnError) throw err;
     } finally {
       if (!isStale()) {
         setLoading(false);
@@ -79,11 +80,11 @@ export function useRoadmapData() {
     return () => controller.abort();
   }, [load]);
 
-  const refetch = useCallback(() => {
+  const refetch = useCallback((options = {}) => {
     const controller = new AbortController();
     // Data is already on screen; revalidate from source without flashing the
     // (now-stale) cache snapshot first.
-    return load(controller.signal, { skipCache: true });
+    return load(controller.signal, { skipCache: true, throwOnError: options.throwOnError === true });
   }, [load]);
 
   // Apply an optimistic full-data replacement: updates the screen, recomputes

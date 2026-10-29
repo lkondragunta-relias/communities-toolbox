@@ -1,0 +1,73 @@
+.org-page { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; gap: var(--sp-5); color: var(--text); }
+.org-head { display: flex; justify-content: space-between; gap: 20px; flex-wrap: wrap; }
+.org-head h2 { margin: 0 0 6px; font-size: var(--t-page); }
+.org-head p, .org-help, .org-admin p, .org-card > p { color: var(--text-muted); margin: 6px 0; }
+.org-head p { max-width: 760px; }
+.org-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.org-page button, .org-dialog button { cursor: pointer; font: inherit; }
+.org-page :where(button:not(.org-badge, .org-link)), .org-dialog button { padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+.org-page button:disabled, .org-dialog button:disabled { opacity: .6; cursor: wait; }
+.org-page .org-primary, .org-dialog .org-primary { background: #16634c; border-color: #16634c; color: #fff; }
+.org-page :is(button, input, select, a):focus-visible, .org-dialog :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.org-callout { padding: 14px; border: 1px solid var(--border); border-left: 4px solid #d97706; border-radius: 6px; }
+.org-stats { display: flex; flex-wrap: wrap; gap: 24px; padding: 16px 0; border-block: 1px solid var(--border); }
+.org-stats > div { min-width: 100px; display: grid; gap: 4px; }
+.org-stats b { font-size: 27px; font-variant-numeric: tabular-nums; }
+.org-stats span { color: var(--text-muted); font-size: 12px; text-transform: uppercase; }
+.org-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.org-field { display: grid; gap: 5px; font-size: 13px; max-width: 100%; }
+.org-field > span { color: var(--text-muted); }
+.org-field :is(input, select, textarea), .org-admin input { font: inherit; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface); min-width: 0; }
+.org-toolbar > .org-field { flex: 0 1 180px; min-width: 0; }
+.org-toolbar .org-field:first-child { flex: 0 1 200px; }
+.org-toolbar .org-field :is(input, select) { width: 100%; box-sizing: border-box; }
+.org-page section > .org-field { max-width: 240px; margin-bottom: 16px; }
+.org-legend, .org-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.org-badge { border: 1px solid color-mix(in srgb, var(--org-color) 45%, transparent); background: color-mix(in srgb, var(--org-color) 12%, var(--surface)); color: var(--text); border-radius: 5px; padding: 4px 8px; font-size: 12px !important; text-align: left; }
+.org-badge::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--org-color); margin-right: 6px; }
+.org-tabs { display: flex; flex-wrap: wrap; border-bottom: 1px solid var(--border); gap: 4px; }
+.org-tabs button[role="tab"] { border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; padding: 10px 14px; }
+.org-tabs button[aria-selected="true"] { border-color: var(--accent); font-weight: 600; }
+.org-section { margin: 20px 0; }
+.org-section h3 { font-size: 16px; margin: 0 0 10px; }
+.org-table-wrap { min-width: 0; overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.org-table { border-collapse: collapse; width: 100%; min-width: 1040px; table-layout: fixed; background: var(--surface); }
+.org-table th, .org-table td { padding: 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.org-table thead th { font-size: 12px; color: var(--text-muted); background: var(--surface-hover); }
+.org-table tr:last-child > * { border-bottom: 0; }
+.org-table th:first-child { width: 16%; }
+.org-table th:last-child { width: 25%; }
+.org-member-group { display: grid; gap: 7px; margin-bottom: 12px; }
+.org-member-group > strong { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.org-member-group h4, .org-member-group p { margin: 0; }
+.org-missing { color: var(--text-muted); font-size: 12px; }
+.org-link { padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; font-weight: 600 !important; }
+.org-link:hover { text-decoration: underline; }
+.org-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 14px; }
+.org-card { border: 1px solid var(--border); border-radius: 8px; padding: 18px; background: var(--surface); min-width: 0; }
+.org-card h3 { font-size: 16px; margin: 0 0 8px; }
+.org-assignments { list-style: none; padding: 0; margin: 12px 0 0; }
+.org-assignments li { border-top: 1px solid var(--border); padding-block: 10px; display: grid; gap: 6px; }
+.org-assignments li > span { font-size: 12px; color: var(--text-muted); }
+.org-assignments p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.org-empty { padding: 25px; color: var(--text-muted); }
+.org-flag { border: 1px solid var(--border); border-left: 3px solid #d97706; border-radius: 5px; padding: 12px; margin: 8px 0; display: grid; gap: 6px; background: var(--surface); }
+.org-flag p { margin: 0; }
+.org-flag > button { justify-self: start; }
+.org-admin { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12px; }
+.org-admin form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.org-allocation { display: flex; align-items: center; gap: 8px; padding: 10px 0; flex-wrap: wrap; }
+.org-allocation span { flex: 1; min-width: 200px; }
+.org-dialog { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 0; width: min(660px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; }
+.org-dialog::backdrop { background: #0008; }
+.org-dialog header { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+.org-dialog h2 { font-size: 20px; margin: 0; }
+.org-dialog form { padding: 0 22px 18px; }
+.org-dialog fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 15px; }
+.org-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.org-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.org-dialog textarea { resize: vertical; }
+@media (max-width: 600px) {
+  .org-form-grid { grid-template-columns: 1fr; }
+  .org-toolbar > .org-field { flex: 1 1 45%; }
+}

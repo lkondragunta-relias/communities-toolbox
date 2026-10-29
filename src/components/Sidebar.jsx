@@ -7,6 +7,7 @@ const NAV = [
   // { id: "table", label: "Projects" }, // hidden for now
   { id: "incidents", label: "Operations", icon: "operations" },
   { id: "sites", label: "Cookiebot", icon: "cookiebot" },
+  { id: "org", label: "Prod & Eng Org", icon: "organization" },
   {
     id: "accessibility",
     label: "Accessibility",
