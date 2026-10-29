@@ -228,7 +228,7 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
     (!filters.query || orgKey(`${domain.name} ${category}`).includes(orgKey(filters.query))));
   return (
     <div className="org-page">
-      <header className="org-head"><div><h2>Domain ownership & team directory</h2><p>Find the people, teams, and partners supporting each domain. Membership is explicitly assigned, never inherited from a whole team.</p></div>
+      <header className="org-head"><div><h2>Domain ownership & team directory</h2><p>Find the people, teams, and partners supporting each domain.</p></div>
         <div className="org-actions">
           <button type="button" disabled={busy} onClick={async () => {
             setBusy(true); setError(""); setNotice("");
