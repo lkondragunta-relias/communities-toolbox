@@ -116,6 +116,26 @@ relationships or people are inferred from the example organization chart.
 | T | (blank) | Visual separator. |
 | U | Team ID | Independent organization-page team identifiers, initially copied from Teams. |
 | V | Team Label | Team display name, editable without changing roadmap teams. |
+| W | Start Date | Optional first assigned day, in `YYYY-MM-DD` format. |
+| X | End Date | Optional last assigned day (inclusive), in `YYYY-MM-DD` format. |
+
+The page defaults to today's **As of** date. Choose any past or future date to
+see matching people, leaders, PMs, UX, team/partner allocations, open roles,
+counts, and coverage gaps. Blank start/end dates mean no limit on that side;
+both blank means the assignment appears on every date. Use **All assignments**
+to find and edit historical or future entries; this is a combined roster, not
+a point-in-time snapshot. **Today** returns to the current-date view.
+
+Existing rows remain undated. The updated API creates missing date columns
+automatically on the first valid **Save assignment**, normally in W–X. If extra
+columns already exist, it appends after them instead of overwriting them.
+No setup function needs to be run. Existing assignments, reference lists,
+and other tabs are preserved.
+
+The existing web app needs a one-time deployment of the updated `Code.gs` to
+recognize date fields. Dated editing is blocked until the API reports date
+support; older deployed APIs cannot safely store these fields. After that
+backend update, all assignment changes use Save with no scripts or deployments.
 
 Change **S2:S** to reorder domains on the page and in its dropdowns, then refresh.
 If Domain Order is blank, the row's position is used. To remove an irrelevant
@@ -141,7 +161,8 @@ the role, set Team and Organization, use **Assigned**, and leave the person blan
 To record an approved vacancy, choose the intended person role, use **Open**,
 and leave the person blank. For explicitly no UX, choose **UX** and **Not applicable**,
 leaving person, team, and organization blank. The page displays **None**, not a
-vacancy or missing-UX flag. Remove this row before assigning UX to that domain.
+vacancy or missing-UX flag. End this row before the first UX assignment date;
+UX None and UX assignments cannot overlap.
 Use **Team member** (category ENG Team members) for managers or PMs who also
 participate on a team, without mislabeling them as engineers.
 Missing Eng leader, PM, UX, Team & Partners, and
@@ -153,8 +174,19 @@ under **Data issues**, not silently counted as valid staffing.
 
 The page uses the existing admin controls for adding, editing, and removing
 assignments. **Add assignment** can reuse an existing person or add a new one.
+When editing is unlocked, click a person's pill in a domain or team view to
+edit that exact assignment in a prefilled dialog. Saving returns to the same
+view, date scope, and filters. If a person has multiple matching assignments,
+each editable pill includes its domain, role, and dates to distinguish them.
+Team and partner pills retain their filtering behavior.
 Edit/remove person assignments from **People**, vacancies from **Open roles &
 flags**, and team-only allocations or explicit UX None from the management section near the bottom.
+Start/end dates are available on every assignment form and shown in the
+assignment details. End an assignment instead of deleting it to retain history.
+To schedule a move, end the old domain assignment and add a new dated assignment
+for the destination. Separate periods for the same assignment are allowed only
+when they do not overlap, including their boundary dates. Dates describe recorded
+plans and history; they do not reconstruct edits that previously overwrote rows.
 Use **Open workbook** to manage organization-page domain names/order (Q–S),
 teams (U–V), role categories (K–L), and partner colors (N–O) directly in the Sheet.
 Remove a domain's assignments before clearing its domain reference cells.

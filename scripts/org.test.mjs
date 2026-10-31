@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
-import { DEFAULT_ORGANIZATIONS, DEFAULT_ORG_ROLES, ORG_FIELDS, ORG_HEADERS, assignmentKey, organizationColor, validateOrgAssignment } from "../src/config/orgConfig.js";
+import { DEFAULT_ORGANIZATIONS, DEFAULT_ORG_ROLES, ORG_FIELDS, ORG_HEADERS, assignmentActiveOn, assignmentKey, organizationColor, validOrgDate, validateOrgAssignment } from "../src/config/orgConfig.js";
 import { buildOrganization, filterOrgRows, orgTeamAndPartnerBadges } from "../src/utils/orgUtils.js";
 
 const domains = [{ id: "wound-care", name: "Wound Care" }, { id: "freecme", name: "FreeCME" }];
@@ -11,7 +11,150 @@ const org = { configured: true, assignments: [], roles: DEFAULT_ORG_ROLES, organ
 const context = { ...org, domains, teams };
 const assignment = (changes = {}) => ({
   id: "a1", domain: "wound-care", personId: "p1", personName: "Example Person",
-  role: "Engineer", team: "core", organization: "Relias", status: "Assigned", notes: "", ...changes,
+  role: "Engineer", team: "core", organization: "Relias", status: "Assigned", notes: "", startDate: "", endDate: "", ...changes,
+});
+
+test("assignment dates have inclusive boundaries and independent open limits", () => {
+  for (const date of ["2020-01-01", "2026-12-15", "2030-01-01"]) assert(assignmentActiveOn(assignment(), date));
+  const period = assignment({ startDate: "2026-11-01", endDate: "2026-11-30" });
+  assert(!assignmentActiveOn(period, "2026-10-31"));
+  assert(assignmentActiveOn(period, "2026-11-01"));
+  assert(assignmentActiveOn(period, "2026-11-30"));
+  assert(!assignmentActiveOn(period, "2026-12-15"));
+  assert(assignmentActiveOn(assignment({ startDate: "2026-12-15" }), "2030-01-01"));
+  assert(!assignmentActiveOn(assignment({ startDate: "2026-12-15" }), "2026-12-14"));
+  assert(assignmentActiveOn(assignment({ endDate: "2026-11-30" }), "2020-01-01"));
+});
+
+test("invalid dates and reversed periods are rejected in client and Apps Script", () => {
+  const { api } = backend();
+  api.setupProdEngOrgSheet();
+  for (const value of ["2026-02-29", "2026-13-01", "2026-04-31", "0000-01-01", "11/30/2026", "2026-1-01"]) {
+    assert.equal(validOrgDate(value), false);
+    assert.match(validateOrgAssignment(assignment({ startDate: value }), context), /valid dates/);
+    assert.throws(() => api.saveOrgAssignment_(assignment({ id: "", endDate: value })), /valid dates/);
+  }
+  assert(validOrgDate("2028-02-29"));
+  const reversed = assignment({ startDate: "2026-12-01", endDate: "2026-11-30" });
+  assert.match(validateOrgAssignment(reversed, context), /on or after/);
+  assert.throws(() => api.saveOrgAssignment_({ ...reversed, id: "" }), /on or after/);
+});
+
+test("snapshots apply to every role, partners, people, vacancies, and gaps", () => {
+  const entries = DEFAULT_ORG_ROLES.map((role, index) => assignment({
+    id: `role-${index}`, role: role.name, personId: `person-${index}`,
+    personName: `Person ${index}`, startDate: "2026-11-01", endDate: "2026-11-30",
+    ...(role.category === "Team & Partners" ? { personId: "", personName: "", organization: "BrillMark" } : {}),
+  }));
+  entries.push(assignment({ id: "open", personId: "", personName: "", status: "Open", startDate: "2026-12-01" }));
+  const data = { domains, teams, org: { ...org, assignments: entries } };
+  const november = buildOrganization(data, "2026-11-30");
+  assert.equal(november.filled.length, 7);
+  assert.equal(november.people.length, 6);
+  assert.equal(november.open.length, 0);
+  assert.equal(november.gaps.length, 5);
+  const december = buildOrganization(data, "2026-12-15");
+  assert.equal(december.filled.length, 0);
+  assert.equal(december.people.length, 0);
+  assert.equal(december.open.length, 1);
+  assert.equal(december.gaps.length, 10);
+  assert.equal(december.assignments.length, 8);
+  assert.equal(buildOrganization(data).filled.length, 7);
+  assert.throws(() => buildOrganization(data, "invalid"), /snapshot date/);
+});
+
+test("separate periods preserve identity while overlapping assignments are rejected", () => {
+  const first = assignment({ endDate: "2026-11-30" });
+  const next = assignment({ id: "a2", startDate: "2026-12-01" });
+  assert.equal(validateOrgAssignment(next, { ...context, assignments: [first] }), "");
+  assert.match(validateOrgAssignment({ ...next, startDate: "2026-11-30" }, { ...context, assignments: [first] }), /already exists/);
+  const data = { domains, teams, org: { ...org, assignments: [first, next] } };
+  assert.equal(buildOrganization(data).people.length, 1);
+  assert.equal(buildOrganization(data, "2026-12-15").people[0].assignments[0].id, "a2");
+  const { api } = backend();
+  api.setupProdEngOrgSheet();
+  api.saveOrgAssignment_({ ...first, id: "" });
+  api.saveOrgAssignment_({ ...next, id: "" });
+  assert.throws(() => api.saveOrgAssignment_(assignment({ id: "", startDate: "2026-11-30" })), /already exists/);
+});
+
+test("UX None can transition to dated UX without contradictory coverage", () => {
+  const none = assignment({ role: "UX", status: "Not applicable", personId: "", personName: "", team: "", organization: "", endDate: "2026-11-30" });
+  const ux = assignment({ id: "a2", role: "UX", startDate: "2026-12-01" });
+  const data = { domains, teams, org: { ...org, assignments: [none, ux] } };
+  assert.equal(buildOrganization(data).issues.length, 0);
+  assert.equal(buildOrganization(data, "2026-11-30").notApplicable.length, 1);
+  assert.equal(buildOrganization(data, "2026-12-15").notApplicable.length, 0);
+  const { api } = backend();
+  api.setupProdEngOrgSheet();
+  api.saveOrgAssignment_({ ...none, id: "" });
+  const saved = api.saveOrgAssignment_({ ...ux, id: "" }).org.assignments.find((row) => row.status === "Assigned");
+  assert.throws(() => api.saveOrgAssignment_({ ...saved, startDate: "2026-11-30" }), /explicit None/);
+});
+
+test("date upgrade and CRUD preserve reference columns, legacy keys, and old-client dates", () => {
+  const { api, book } = backend();
+  api.setupProdEngOrgSheet();
+  const sheet = book.getSheetByName("Prod Eng Org");
+  sheet.cells[0] = sheet.cells[0].slice(0, 22);
+  const original = assignment({ id: "" });
+  sheet.getRange(2, 1, 1, 9).setValues([ORG_FIELDS.slice(0, 9).map((key) => original[key])]);
+  const before = JSON.stringify(sheet.cells.map((row) => row.slice(0, 22)));
+  const legacyId = api.readOrg_().assignments[0].id;
+  assert.equal(legacyId, assignmentKey(original));
+  assert.equal(api.readOrg_().assignmentDatesSupported, true);
+  const result = api.saveOrgAssignment_({ ...original, id: legacyId, startDate: "2026-11-01", endDate: "2026-11-30" });
+  assert.deepEqual(sheet.cells[0].slice(22, 24), ["Start Date", "End Date"]);
+  const unchanged = sheet.cells.map((row) => row.slice(0, 22));
+  unchanged[1][0] = "";
+  assert.equal(JSON.stringify(unchanged), before);
+  const saved = result.org.assignments[0];
+  assert.equal(saved.startDate, "2026-11-01");
+  assert.equal(saved.endDate, "2026-11-30");
+  const oldClient = { ...saved, notes: "Updated by an older client" };
+  delete oldClient.startDate;
+  delete oldClient.endDate;
+  assert.equal(api.saveOrgAssignment_(oldClient).org.assignments[0].endDate, "2026-11-30");
+  const references = JSON.stringify(sheet.cells.map((row) => row.slice(10, 22)));
+  api.deleteOrgAssignment_({ id: saved.id });
+  assert.equal(sheet.cells[1][22], "");
+  assert.equal(sheet.cells[1][23], "");
+  assert.equal(JSON.stringify(sheet.cells.map((row) => row.slice(10, 22))), references);
+});
+
+test("Save appends missing date columns safely and does not migrate on invalid input", () => {
+  const { api, book } = backend();
+  api.setupProdEngOrgSheet();
+  const sheet = book.getSheetByName("Prod Eng Org");
+  sheet.cells[0] = sheet.cells[0].slice(0, 22).concat(["Custom field"]);
+  sheet.getRange(2, 23).setValue("Keep this");
+  const before = JSON.stringify(sheet.cells);
+  assert.throws(() => api.saveOrgAssignment_(assignment({ id: "", startDate: "2026-02-30" })), /valid dates/);
+  assert.equal(JSON.stringify(sheet.cells), before);
+  api.saveOrgAssignment_(assignment({ id: "", startDate: "2026-12-01" }));
+  assert.equal(sheet.cells[1][22], "Keep this");
+  assert.deepEqual(sheet.cells[0].slice(22), ["Custom field", "Start Date", "End Date"]);
+  assert.equal(sheet.cells[1][23], "2026-12-01");
+  const count = sheet.getLastColumn();
+  const saved = api.readOrg_().assignments[0];
+  api.saveOrgAssignment_({ ...saved, endDate: "2026-12-31" });
+  assert.equal(sheet.getLastColumn(), count);
+  assert.equal(api.readOrg_().assignments[0].endDate, "2026-12-31");
+});
+
+test("native spreadsheet dates use the workbook timezone rather than display formatting", () => {
+  const { api, book } = backend();
+  api.setupProdEngOrgSheet();
+  api.saveOrgAssignment_(assignment({ id: "" }));
+  book.getSpreadsheetTimeZone = () => "America/New_York";
+  api.Utilities.formatDate = (date, zone, format) => {
+    assert.equal(zone, "America/New_York");
+    assert.equal(format, "yyyy-MM-dd");
+    return new Intl.DateTimeFormat("en-CA", { timeZone: zone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+  };
+  const sheet = book.getSheetByName("Prod Eng Org");
+  sheet.getRange(2, 23).setValue(vm.runInContext('new Date("2026-12-01T02:00:00Z")', api));
+  assert.equal(api.readOrg_().assignments[0].startDate, "2026-11-30");
 });
 
 test("one person supports multiple domains and roles without duplicated headcount", () => {
@@ -190,11 +333,11 @@ test("Apps Script manual blank-ID rows can be updated by content without row-ind
   const { api, book } = backend();
   api.setupProdEngOrgSheet();
   const sheet = book.getSheetByName("Prod Eng Org");
-  sheet.getRange(8, 1, 1, 9).setValues([ORG_FIELDS.map((field) => assignment({ id: "" })[field])]);
+  sheet.getRange(8, 1, 1, 9).setValues([ORG_FIELDS.slice(0, 9).map((field) => assignment({ id: "" })[field])]);
   const row = api.readOrg_().assignments[0];
   assert(row.id.startsWith("sheet:"));
   sheet.getRange(8, 1, 1, 9).setValues([Array(9).fill("")]);
-  sheet.getRange(9, 1, 1, 9).setValues([ORG_FIELDS.map((field) => assignment({ id: "" })[field])]);
+  sheet.getRange(9, 1, 1, 9).setValues([ORG_FIELDS.slice(0, 9).map((field) => assignment({ id: "" })[field])]);
   const result = api.saveOrgAssignment_({ ...row, notes: "Edited" });
   assert.equal(result.org.assignments[0].id, "uuid-1");
   assert.equal(result.org.assignments[0].notes, "Edited");

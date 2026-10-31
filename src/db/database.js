@@ -325,7 +325,7 @@ async function readLocalOrg() {
   const [assignments, roles, organizations, domains, teams] = await Promise.all([
     db.orgAssignments.toArray(), db.orgRoles.toArray(), db.orgOrganizations.toArray(), db.orgDomains.orderBy("order").toArray(), db.orgTeams.toArray(),
   ]);
-  return { configured: true, assignments, roles, organizations, domains, teams };
+  return { configured: true, assignmentDatesSupported: true, assignments, roles, organizations, domains, teams };
 }
 
 async function writeLocalOrg(payload) {
@@ -366,6 +366,10 @@ async function writeLocalOrg(payload) {
         await db.orgAssignments.delete(id);
       } else {
         const row = Object.fromEntries(ORG_FIELDS.map((key) => [key, String(payload[key] || "").trim()]));
+        const existing = org.assignments.find((entry) => entry.id === id);
+        for (const field of ["startDate", "endDate"]) {
+          if (existing && !Object.hasOwn(payload, field)) row[field] = existing[field] || "";
+        }
         const error = validateOrgAssignment(row, org);
         if (error) throw new Error(error);
         row.id ||= crypto.randomUUID();

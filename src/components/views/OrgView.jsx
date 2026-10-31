@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ORG_FIELDS, orgKey, organizationColor, personKey, validateOrgAssignment } from "../../config/orgConfig.js";
+import { ORG_FIELDS, orgKey, organizationColor, personKey, validOrgDate, validateOrgAssignment } from "../../config/orgConfig.js";
 import { buildOrganization, filterOrgRows, groupOrgRows, orgTeamAndPartnerBadges } from "../../utils/orgUtils.js";
 import { deleteOrgAssignment, getGoogleSheetUrl, isLocalMode, saveOrgAssignment } from "../../services/sheetsApi";
 import "../../styles/org.css";
@@ -10,7 +10,12 @@ const TABS = [
   ["people", "People"],
   ["gaps", "Open roles & flags"],
 ];
-const EMPTY_ASSIGNMENT = { domain: "", personId: "", personName: "", role: "Engineer", team: "", organization: "Relias", status: "Assigned", notes: "" };
+const EMPTY_ASSIGNMENT = { domain: "", personId: "", personName: "", role: "Engineer", team: "", organization: "Relias", status: "Assigned", notes: "", startDate: "", endDate: "" };
+const today = () => {
+  const date = new Date();
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+};
+const assignmentPeriod = (row) => `${row.startDate || "No start limit"} – ${row.endDate || "No end limit"}`;
 const unique = (values) => [...new Set(values.filter(Boolean))];
 
 function Dialog({ title, onClose, busy, children }) {
@@ -129,7 +134,10 @@ function AssignmentForm({ entry, model, onSave, onClose }) {
                 {model.teams.map((team) => <option key={team.id} value={team.id}>{team.label}</option>)}
               </select>
             </Field>
+            <Field label="Start date (optional)"><input type="date" value={form.startDate} max={form.endDate || undefined} onChange={(e) => set("startDate", e.target.value)} /></Field>
+            <Field label="End date (last assigned day, optional)"><input type="date" value={form.endDate} min={form.startDate || undefined} onChange={(e) => set("endDate", e.target.value)} /></Field>
           </div>
+          <p>Leave dates blank for no time limit. Both start and end dates are included. End an assignment rather than removing it to preserve history.</p>
           <Field label="Notes"><textarea rows={3} value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
         </fieldset>
         {error ? <p role="alert" className="roadmap__error">{error}</p> : null}
@@ -140,7 +148,10 @@ function AssignmentForm({ entry, model, onSave, onClose }) {
 }
 
 export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onLock, applyRoadmap, refetch }) {
-  const model = useMemo(() => buildOrganization(data), [data]);
+  const [asOf, setAsOf] = useState(today);
+  const [allAssignments, setAllAssignments] = useState(false);
+  const fullModel = useMemo(() => buildOrganization(data), [data]);
+  const model = useMemo(() => buildOrganization(data, allAssignments ? "" : asOf), [data, allAssignments, asOf]);
   const [tab, setTab] = useState("domains");
   const [group, setGroup] = useState("domain");
   const [filters, setFilters] = useState({ query: "", domain: "", organization: "", role: "" });
@@ -167,7 +178,11 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
     applyRoadmap({ ...data, org: result.org });
     setNotice("Saved.");
   };
-  const save = async (row) => applyResult(await saveOrgAssignment({ ...row, adminToken }));
+  const save = async (row) => {
+    if (!isLocalMode() && !data.org?.assignmentDatesSupported) throw new Error("The connected API does not support assignment dates yet. A one-time backend update is required; after that, Save updates the worksheet automatically.");
+    applyResult(await saveOrgAssignment({ ...row, adminToken }));
+    setNotice("Saved. Assignments outside the selected date are available under All assignments.");
+  };
   const remove = async (row) => {
     if (!window.confirm(`Remove this ${row.role} assignment for ${row.domainName}? Other assignments are not affected.`)) return;
     setBusy(true); setError("");
@@ -181,10 +196,18 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
   const memberBadges = (entries) => {
     const seen = new Set();
     return entries.filter((row) => {
+      if (adminUnlocked) return true;
       const key = personKey(row);
       if (seen.has(key)) return false;
       seen.add(key); return true;
-    }).map((row) => badge(row.personName, row.organization, () => focusPerson(row), personKey(row)));
+    }).map((row) => {
+      const repeated = adminUnlocked && entries.filter((entry) => personKey(entry) === personKey(row)).length > 1;
+      const label = repeated ? `${row.personName} · ${row.domainName} · ${row.role} · ${assignmentPeriod(row)}` : row.personName;
+      return badge(label, row.organization, () => {
+        if (adminUnlocked) setModal({ kind: "assignment", entry: row });
+        else focusPerson(row);
+      }, adminUnlocked ? row.id : personKey(row));
+    });
   };
   const teamBadges = (entries) => orgTeamAndPartnerBadges(entries).map((item) =>
     badge(item.label, item.organization, () => focusTeamOrPartner(item), orgKey(item.label))
@@ -247,13 +270,23 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
       <div className="org-stats">
         {[[visibleDomains.length, "Domains"], [assignedPeople.size, "People"], [unique(rows.map((row) => row.team)).length, "Assigned teams"], [unique(rows.filter((row) => orgKey(row.organization) !== "relias").map((row) => row.organization)).length, "Partners"], [open.length, "Open roles"]].map(([value, label]) => <div key={label}><b>{value}</b><span>{label}</span></div>)}
       </div>
-      <div className="org-toolbar">
-        <Field label="Search"><input type="search" placeholder="Person, domain, team, partner…" value={filters.query} onChange={(e) => setFilter("query", e.target.value)} /></Field>
+      <div className="org-snapshot-bar" role="group" aria-label="Organization snapshot">
+        <Field label="As of"><input type="date" required min="0001-01-01" max="9999-12-31" disabled={allAssignments} value={asOf} onChange={(e) => {
+          if (!validOrgDate(e.target.value)) { setError("Choose a valid snapshot date."); return; }
+          setAsOf(e.target.value); setFocusedPerson(""); setError("");
+        }} /></Field>
+        <button type="button" onClick={() => { setAsOf(today()); setAllAssignments(false); setFocusedPerson(""); }}>Today</button>
+        <Field label="Date scope"><select value={allAssignments ? "all" : "date"} onChange={(e) => { setAllAssignments(e.target.value === "all"); setFocusedPerson(""); }}><option value="date">Selected date</option><option value="all">All assignments</option></select></Field>
+        <p className="org-snapshot-status" role="status">{allAssignments ? "All assignments across time" : <>Snapshot for <time dateTime={asOf}>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${asOf}T00:00:00Z`))}</time></>}</p>
+      </div>
+      <div className="org-toolbar" role="group" aria-label="Organization filters">
+        <Field label="Search"><input type="search" placeholder="Find people or teams…" value={filters.query} onChange={(e) => setFilter("query", e.target.value)} /></Field>
         <Field label="Domain"><select value={filters.domain} onChange={(e) => setFilter("domain", e.target.value)}><option value="">All domains</option>{model.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.name}</option>)}</select></Field>
         <Field label="Organization / partner"><select value={filters.organization} onChange={(e) => setFilter("organization", e.target.value)}><option value="">All organizations</option>{model.organizations.map((item) => <option key={item.name}>{item.name}</option>)}</select></Field>
         <Field label="Role"><select value={filters.role} onChange={(e) => setFilter("role", e.target.value)}><option value="">All roles</option>{model.roles.map((item) => <option key={item.name}>{item.name}</option>)}</select></Field>
         <button type="button" onClick={reset}>Clear filters</button>
       </div>
+      {!isLocalMode() && ready && !data.org?.assignmentDatesSupported ? <p className="org-callout">The connected API needs a one-time update to support dates. Once updated, Save manages the worksheet automatically—no setup scripts required.</p> : null}
       <div className="org-legend" aria-label="Organization colors">
         {model.organizations.map((item) => badge(item.name, item.name, () => setFilter("organization", item.name)))}
       </div>
@@ -297,7 +330,7 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         </div> : tab === "people" ? <>
           {focusedPerson ? <button type="button" onClick={() => setFocusedPerson("")}>Show all people</button> : null}
           <div className="org-cards">{people.map((person) => <article key={person.key} className="org-card"><h3>{badge(person.name, person.organization, () => setFilter("organization", person.organization), person.key)}</h3><p>{person.organization} · {unique(person.assignments.map((row) => row.domain)).length} domains</p>
-            <ul className="org-assignments">{person.assignments.filter((row) => rows.some((match) => match.id === row.id)).map((row) => <li key={row.id}><strong>{row.domainName}</strong><span>{row.role}{row.teamName ? ` · ${row.teamName}` : ""}</span>{row.notes ? <p>{row.notes}</p> : null}
+            <ul className="org-assignments">{person.assignments.filter((row) => rows.some((match) => match.id === row.id)).map((row) => <li key={row.id}><strong>{row.domainName}</strong><span>{row.role}{row.teamName ? ` · ${row.teamName}` : ""}</span><span>{assignmentPeriod(row)}</span>{row.notes ? <p>{row.notes}</p> : null}
               {adminUnlocked ? <div className="org-actions"><button type="button" disabled={busy} onClick={() => setModal({ kind: "assignment", entry: row })}>Edit</button><button type="button" disabled={busy} onClick={() => remove(row)}>Remove</button></div> : null}
             </li>)}</ul>
           </article>)}</div>
@@ -305,10 +338,11 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         </> : <>
           <h3>Open positions</h3><p>Explicitly recorded vacancies, separate from missing assignments.</p>
           {open.map((row) => <article className="org-flag" key={row.id}><strong>{row.domainName} · {row.role}</strong><p>{row.organization}{row.teamName ? ` · ${row.teamName}` : ""}{row.notes ? ` — ${row.notes}` : ""}</p>
+            <p>{assignmentPeriod(row)}</p>
             {adminUnlocked ? <div className="org-actions"><button type="button" disabled={busy} onClick={() => setModal({ kind: "assignment", entry: row })}>Edit / fill position</button><button type="button" disabled={busy} onClick={() => remove(row)}>Remove</button></div> : null}
           </article>)}
           {!open.length ? <p>No open positions recorded.</p> : null}
-          <h3>Missing domain assignments</h3><p>Checked against the full roster, not the role or partner filter. A missing assignment is not automatically a hiring request.</p>
+          <h3>Missing domain assignments</h3><p>Checked against the selected date scope, not the role or partner filter. A missing assignment is not automatically a hiring request.</p>
           {ready ? gaps.map(({ domain, category }) => <article className="org-flag" key={`${domain.id}:${category}`}><strong>{domain.name}</strong><span>{category} unassigned</span>
             {adminUnlocked ? <button type="button" onClick={() => setModal({ kind: "assignment", entry: { domain: domain.id, role: model.roles.find((item) => item.category === category)?.name || "" } })}>Assign</button> : null}
           </article>) : <p>Connect the Sheet before checking coverage.</p>}
@@ -319,7 +353,7 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         </>}
       </section>
       {adminUnlocked && ready && [...model.filled, ...model.notApplicable].some((row) => !row.personName) ? <details className="org-section"><summary>Manage team allocations & explicit UX None</summary>
-        {[...model.filled, ...model.notApplicable].filter((row) => !row.personName).map((row) => <div key={row.id} className="org-allocation"><span>{row.domainName} · {row.status === "Not applicable" ? "UX: None" : `${row.teamName} · ${row.organization}`}</span><button type="button" disabled={busy} onClick={() => setModal({ kind: "assignment", entry: row })}>Edit</button><button type="button" disabled={busy} onClick={() => remove(row)}>Remove</button></div>)}
+        {[...model.filled, ...model.notApplicable].filter((row) => !row.personName).map((row) => <div key={row.id} className="org-allocation"><span>{row.domainName} · {row.status === "Not applicable" ? "UX: None" : `${row.teamName} · ${row.organization}`} · {assignmentPeriod(row)}</span><button type="button" disabled={busy} onClick={() => setModal({ kind: "assignment", entry: row })}>Edit</button><button type="button" disabled={busy} onClick={() => remove(row)}>Remove</button></div>)}
       </details> : null}
       <footer className="org-admin">{adminUnlocked ? <button type="button" onClick={onLock}>Lock editing</button> :
         <form onSubmit={(event) => { event.preventDefault(); if (token.trim()) { onUnlock(token.trim()); setToken(""); } }}>
@@ -327,7 +361,7 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         </form>}
         <p>Names and assignments have the same viewing access as the rest of the Toolbox. Edits require the existing admin token.</p>
       </footer>
-      {modal?.kind === "assignment" ? <AssignmentForm entry={modal.entry} model={model} onSave={save} onClose={() => setModal(null)} /> : null}
+      {modal?.kind === "assignment" ? <AssignmentForm entry={modal.entry} model={fullModel} onSave={save} onClose={() => setModal(null)} /> : null}
     </div>
   );
 }
