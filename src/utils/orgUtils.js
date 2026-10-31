@@ -1,6 +1,7 @@
-import { ORG_CATEGORIES, assignmentKey, orgKey, personKey, validateOrgAssignment } from "../config/orgConfig.js";
+import { ORG_CATEGORIES, ORG_FIELDS, assignmentActiveOn, assignmentKey, orgKey, personKey, validOrgDate, validateOrgAssignment } from "../config/orgConfig.js";
 
-export function buildOrganization(data) {
+export function buildOrganization(data, asOf = "") {
+  if (asOf && !validOrgDate(asOf)) throw new Error("Choose a valid organization snapshot date.");
   const source = data.org || {};
   const domains = (source.domains || data.domains || [])
     .map((domain, index) => ({ ...domain, order: Number.isFinite(Number(domain.order)) && domain.order !== "" && domain.order != null ? Number(domain.order) : index + 1 }))
@@ -23,7 +24,7 @@ export function buildOrganization(data) {
   }
   const assignments = (source.assignments || []).map((entry) => {
     const row = Object.fromEntries(
-      ["id", "domain", "personId", "personName", "role", "team", "organization", "status", "notes"]
+      ORG_FIELDS
         .map((field) => [field, String(entry[field] || "").trim()])
     );
     const domain = domains.find((item) => [orgKey(item.id), orgKey(item.name)].includes(orgKey(row.domain)));
@@ -59,7 +60,7 @@ export function buildOrganization(data) {
     return message ? [{ row, message }] : [];
   });
   const validIds = new Set(issues.map(({ row }) => row.id));
-  const valid = assignments.filter((row) => !validIds.has(row.id));
+  const valid = assignments.filter((row) => !validIds.has(row.id) && (!asOf || assignmentActiveOn(row, asOf)));
   const filled = valid.filter((row) => row.status === "Assigned");
   const notApplicable = valid.filter((row) => row.status === "Not applicable");
   const people = new Map();
