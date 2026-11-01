@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ORG_FIELDS, orgKey, organizationColor, personKey, validOrgDate, validateOrgAssignment } from "../../config/orgConfig.js";
 import { buildOrganization, filterOrgRows, groupOrgRows, orgTeamAndPartnerBadges } from "../../utils/orgUtils.js";
 import { deleteOrgAssignment, getGoogleSheetUrl, isLocalMode, saveOrgAssignment } from "../../services/sheetsApi";
+import OrgCommandChat from "../OrgCommandChat.jsx";
 import "../../styles/org.css";
 
 const TABS = [
@@ -42,7 +43,7 @@ function Field({ label, children }) {
   return <label className="org-field"><span>{label}</span>{children}</label>;
 }
 
-function AssignmentForm({ entry, model, onSave, onClose }) {
+function AssignmentForm({ entry, model, onSave, onRemove, onClose }) {
   const [form, setForm] = useState(() => ({ ...EMPTY_ASSIGNMENT, ...entry }));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,6 +67,15 @@ function AssignmentForm({ entry, model, onSave, onClose }) {
     person.key === personKey(form) && person.name === form.personName && person.organization === form.organization
   )?.key || "";
   const options = (values, current) => unique([...values, current]);
+  const removeEntry = async () => {
+    const domain = model.domains.find((item) => item.id === entry.domain)?.name || entry.domain;
+    if (!window.confirm(`Remove ${entry.personName || entry.status} · ${entry.role} from ${domain}? This deletes this assignment's recorded history. Other assignments are unchanged. Use an end date instead to preserve history.`)) return;
+    setBusy(true);
+    setError("");
+    try { await onRemove(entry); onClose(); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  };
   const submit = async (event) => {
     event.preventDefault();
     const row = Object.fromEntries(ORG_FIELDS.map((key) => [key, String(form[key] || "").trim()]));
@@ -128,8 +138,8 @@ function AssignmentForm({ entry, model, onSave, onClose }) {
                 }} />
               </Field>
             </> : null}
-            <Field label={`Engineering team${isTeam || role?.category === "ENG Team members" ? "" : " (optional)"}`}>
-              <select disabled={isNone} required={isTeam || role?.category === "ENG Team members"} value={form.team} onChange={(e) => set("team", e.target.value)}>
+            <Field label={`Engineering team${isTeam ? "" : " (optional)"}`}>
+              <select disabled={isNone} required={isTeam} value={form.team} onChange={(e) => set("team", e.target.value)}>
                 <option value="">No team</option>
                 {model.teams.map((team) => <option key={team.id} value={team.id}>{team.label}</option>)}
               </select>
@@ -141,7 +151,7 @@ function AssignmentForm({ entry, model, onSave, onClose }) {
           <Field label="Notes"><textarea rows={3} value={form.notes} onChange={(e) => set("notes", e.target.value)} /></Field>
         </fieldset>
         {error ? <p role="alert" className="roadmap__error">{error}</p> : null}
-        <footer><button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="org-primary" disabled={busy}>{busy ? "Saving…" : "Save assignment"}</button></footer>
+        <footer>{entry?.id ? <button type="button" className="org-remove" disabled={busy} onClick={removeEntry}>Remove assignment</button> : null}<button type="button" disabled={busy} onClick={onClose}>Cancel</button><button type="submit" className="org-primary" disabled={busy}>{busy ? "Working…" : "Save assignment"}</button></footer>
       </form>
     </Dialog>
   );
@@ -161,6 +171,7 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const adminRef = useRef(null);
   const ready = Boolean(data.org?.configured);
   const sheetUrl = getGoogleSheetUrl();
   const rows = filterOrgRows([...model.filled, ...model.notApplicable], filters);
@@ -183,10 +194,15 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
     applyResult(await saveOrgAssignment({ ...row, adminToken }));
     setNotice("Saved. Assignments outside the selected date are available under All assignments.");
   };
+  const deleteAssignment = async (row) => {
+    if (!adminUnlocked) throw new Error("Unlock editing before removing an assignment.");
+    applyResult(await deleteOrgAssignment({ adminToken, id: row.id }));
+    setNotice("Assignment removed. Other assignments are unchanged.");
+  };
   const remove = async (row) => {
     if (!window.confirm(`Remove this ${row.role} assignment for ${row.domainName}? Other assignments are not affected.`)) return;
     setBusy(true); setError("");
-    try { applyResult(await deleteOrgAssignment({ adminToken, id: row.id })); }
+    try { await deleteAssignment(row); }
     catch (err) { setError(err.message); }
     finally { setBusy(false); }
   };
@@ -355,13 +371,17 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
       {adminUnlocked && ready && [...model.filled, ...model.notApplicable].some((row) => !row.personName) ? <details className="org-section"><summary>Manage team allocations & explicit UX None</summary>
         {[...model.filled, ...model.notApplicable].filter((row) => !row.personName).map((row) => <div key={row.id} className="org-allocation"><span>{row.domainName} · {row.status === "Not applicable" ? "UX: None" : `${row.teamName} · ${row.organization}`} · {assignmentPeriod(row)}</span><button type="button" disabled={busy} onClick={() => setModal({ kind: "assignment", entry: row })}>Edit</button><button type="button" disabled={busy} onClick={() => remove(row)}>Remove</button></div>)}
       </details> : null}
-      <footer className="org-admin">{adminUnlocked ? <button type="button" onClick={onLock}>Lock editing</button> :
+      <footer ref={adminRef} className="org-admin">{adminUnlocked ? <button type="button" onClick={onLock}>Lock editing</button> :
         <form onSubmit={(event) => { event.preventDefault(); if (token.trim()) { onUnlock(token.trim()); setToken(""); } }}>
           <label>Admin token <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} required /></label><button type="submit">Unlock editing</button>
         </form>}
         <p>Names and assignments have the same viewing access as the rest of the Toolbox. Edits require the existing admin token.</p>
       </footer>
-      {modal?.kind === "assignment" ? <AssignmentForm entry={modal.entry} model={fullModel} onSave={save} onClose={() => setModal(null)} /> : null}
+      {ready ? <OrgCommandChat model={fullModel}
+        canEdit={adminUnlocked && !busy && !modal && (isLocalMode() || Boolean(data.org?.assignmentDatesSupported))}
+        unavailableReason={!adminUnlocked ? "Unlock editing with the existing admin token before saving." : busy || modal ? "Finish the current edit or refresh before saving a chat change." : "The connected API needs the assignment-date backend update before saving."}
+        onSave={save} onRemove={deleteAssignment} onRequestUnlock={() => { adminRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); adminRef.current?.querySelector("input, button")?.focus(); }} /> : null}
+      {modal?.kind === "assignment" ? <AssignmentForm entry={modal.entry} model={fullModel} onSave={save} onRemove={deleteAssignment} onClose={() => setModal(null)} /> : null}
     </div>
   );
 }

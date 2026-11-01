@@ -74,7 +74,6 @@ export function validateOrgAssignment(row, { domains, teams, roles, organization
   } else if (row.status === "Open" && (row.personName || row.personId)) {
     return "An open position must not contain a person.";
   }
-  if (role.category === "ENG Team members" && !row.team) return "Engineering team members need a team.";
   if (row.personId && others.some((entry) =>
     entry.personId === row.personId &&
     (orgKey(entry.personName) !== orgKey(row.personName) || orgKey(entry.organization) !== orgKey(row.organization))

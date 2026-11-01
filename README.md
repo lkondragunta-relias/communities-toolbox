@@ -99,7 +99,7 @@ relationships or people are inferred from the example organization chart.
 | C | Person ID | Stable identity reused across assignments; the app generates it. Optional for manual rows. |
 | D | Person Name | Person's display name; blank for open positions, team-only allocations, or explicit UX None. |
 | E | Role | A value from column K. |
-| F | Team | One team ID from column U; required for engineering members and team-only allocations. |
+| F | Team | Optional team ID from column U for any person; required only for team-only allocations. |
 | G | Organization | Relias or a partner from column N; blank for explicit UX None. |
 | H | Position Status | `Assigned`, `Open`, or `Not applicable` (UX only). |
 | I | Notes | Optional assignment-specific notes. |
@@ -179,6 +179,11 @@ edit that exact assignment in a prefilled dialog. Saving returns to the same
 view, date scope, and filters. If a person has multiple matching assignments,
 each editable pill includes its domain, role, and dates to distinguish them.
 Team and partner pills retain their filtering behavior.
+Existing-assignment dialogs also offer **Remove assignment** with a confirmation
+identifying the original person, role, and domain. Removal ignores unsaved form
+changes, deletes only that original assignment, and returns to the same view.
+Failures remain visible in the dialog. New-assignment dialogs have no removal
+button. End-date an assignment instead if its history should be retained.
 Edit/remove person assignments from **People**, vacancies from **Open roles &
 flags**, and team-only allocations or explicit UX None from the management section near the bottom.
 Start/end dates are available on every assignment form and shown in the
@@ -192,6 +197,87 @@ teams (U–V), role categories (K–L), and partner colors (N–O) directly in t
 Remove a domain's assignments before clearing its domain reference cells.
 Original Domains and Teams are not edited
 through this organization page.
+
+**Edit with chat** opens a compact guided-command assistant on this page. It runs
+entirely in the browser without an external AI provider or chatbot API key.
+Commands search all assignments across dates, independently of the visible
+filters. Each command affects **one assignment** and shows a before/after preview;
+if several assignments match, select the exact domain, role, partner, and period.
+Nothing is written until **Confirm & save to Sheet**, using the same admin unlock,
+validation, and Google Sheet save flow as the form. The current tab, filters, and
+snapshot date remain unchanged. Local mode saves only to the browser.
+
+Supported command shapes (replace the example names with your directory values):
+
+```text
+update Example Person in Example Domain: start 2026-12-15; end blank
+end Example Person in Example Domain on 2026-12-31
+assign New Person to Example Domain as Engineer; organization Relias; team Exact Team Name
+add Existing Person as PM for Example Domain
+Can you please add Existing Person for Example Domain, starting from October 12th
+Set Example Person's end date to December 31
+remove Example Person from PM on Example Domain
+update Example Person: domain Destination Domain; role PM; name New Name; notes Updated work
+```
+
+Editable fields are `domain`, `name`, `role`, `team`, `organization` (or `partner`),
+`status`, `notes`, `start`/`start date`, and `end`/`end date`. Use sentences with
+commas, "and", semicolons, or new lines between field clauses. Polite prefixes,
+`starting from`, `ending on`, and `set Person's end date to` are supported.
+Quote notes containing field-like clauses or separators. Use `blank` or `null`
+to clear a field. Dates accept month names/abbreviations, ordinal days, day-month
+wording, ISO dates, and unambiguous numeric dates. An omitted year uses the
+browser's **current calendar year at submission**, not the snapshot year;
+explicit years are retained, even for past dates. For example, "October 12th"
+entered in 2026 becomes `2026-10-12`. Numeric dates like `10/12` are ambiguous
+between month/day and day/month and require a spelled-out month instead.
+Invalid dates are rejected, never rolled into another month.
+An omitted start or end date defaults to blank (no time limit)
+on both add and update commands. Updating another field without dates therefore
+clears existing dates; the preview shows those changes before confirmation.
+To retain an existing boundary, include that date explicitly in the command.
+Reference values must match an exact configured name or domain/team
+ID (case-insensitive). A single first/last name can find candidates but never
+silently selects among multiple matches. Use `team allocation`, `open PM` (or
+another exact role), `UX None`, or `assignment ID` to target rows without people.
+New people require an organization. Team is optional for every person role,
+including engineers, leaders, and PMs. Only team-only allocations require a team.
+For existing people, a unique recorded role and organization
+can be reused and shown in the preview. Missing or nonunique roles and
+missing organizations prompt for a choice in the chat, retaining the original
+command and normalized dates. No responsibilities or reference values are invented.
+The `add Person as Role for Domain` phrasing is also supported. A unique
+first/last name on an add command reuses that person's full name and identity;
+ambiguous short names require the full name before a preview is prepared.
+
+The assistant retains a request across clarification replies, rather than
+requiring you to repeat it. Names, domains, roles, organizations, teams, and
+date clauses can appear in different orders. Known full names and unique short
+names resolve against the directory; normalized punctuation and close spellings
+produce ranked suggestions. **Fuzzy or ambiguous matches require selection**,
+never silently choosing the first result. You can type a reply or choose a
+suggestion, including explicit confirmation before creating a new person.
+Missing or invalid dates, roles, teams, partners, and assignment selections
+remain in the conversation until corrected. Validation errors retain the draft
+and ask for a correction such as `domain Wound Care` or `start October 12`.
+Say `cancel` to discard the draft without writing.
+
+This is deterministic local matching, not unrestricted AI understanding: it
+cannot guarantee interpretation of every possible sentence. It can remove one
+exact assignment after an explicit **Confirm removal** preview, resolving person,
+domain, and optional role and asking you to select among multiple matches.
+Removal deletes that row's recorded history, not the person's other assignments.
+Use an end date instead to retain history. Removal uses the existing token-guarded
+delete API and checks that the loaded row has not changed since the preview.
+It does not edit reference lists, rename a person everywhere, or perform bulk
+changes. Renaming a row or changing its organization reuses an unambiguous
+matching identity or creates a new one; the other assignments are not renamed.
+To preserve a historical move, end the old assignment and add a new one instead
+of changing its domain. Previews are checked against the current loaded directory
+before save; this is not a server-side concurrency lock for outside Sheet edits.
+After an unconfirmed save, refresh and check the Sheet before submitting again.
+Chat messages remain only in component memory (the latest 20 messages), not in
+Google Sheets or browser storage.
 
 Sheet edits are the source of truth in remote mode. Until the updated Apps Script
 is deployed, the page displays a connection/setup message rather than example
