@@ -3,7 +3,7 @@ import {
   initiativeMatchesFilter,
   isAtRiskStatus,
   isDoneStatus,
-  isFilterActive,
+  isItemFilterActive,
   timelinePositionToCss,
 } from "../utils/roadmapUtils";
 import { confidenceClass } from "../config/confidenceConfig";
@@ -18,7 +18,8 @@ export default function InitiativeBar({
   onSelect,
   onToggleDone,
 }) {
-  const filterActive = isFilterActive(filterState);
+  // Domain selection hides whole rows, so only item-level filters highlight bars.
+  const filterActive = isItemFilterActive(filterState);
   const matched = filterActive && initiativeMatchesFilter(item, category, filterState);
   const dimmed = filterActive && !matched;
 

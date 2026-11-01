@@ -49,6 +49,7 @@ import {
   quarterStartISO,
   setQuartersFromData,
   shiftTimelineByQuarters,
+  toggleDomainSelection,
 } from "./utils/roadmapUtils";
 
 const VIEW_TITLES = Object.fromEntries(ROUTES.map((r) => [r.id, r.title]));
@@ -61,7 +62,7 @@ const ROADMAP_MODE_KEY = "roadmap_layout";
 
 /**
  * Roadmap view options that live in the query string (not the hash) so a
- * shared link like `?present=1&domain=platform&layout=board#/roadmap` opens
+ * shared link like `?present=1&domain=platform,mobile&layout=board#/roadmap` opens
  * straight into a clean, presentable view.
  */
 function readRoadmapUrlOptions() {
@@ -70,10 +71,10 @@ function readRoadmapUrlOptions() {
     return {
       layout: q.get("layout"),
       present: q.get("present") === "1",
-      domain: q.get("domain"),
+      domains: q.get("domain"),
     };
   } catch {
-    return { layout: null, present: false, domain: null };
+    return { layout: null, present: false, domains: null };
   }
 }
 
@@ -87,13 +88,13 @@ function getInitialLayout() {
   }
 }
 
-function writeRoadmapUrlOptions({ layout, present, domain }) {
+function writeRoadmapUrlOptions({ layout, present, domains }) {
   try {
     const url = new URL(window.location.href);
     const q = url.searchParams;
     if (present) q.set("present", "1");
     else q.delete("present");
-    if (present && domain && domain !== "all") q.set("domain", domain);
+    if (present && domains && domains.size > 0) q.set("domain", [...domains].join(","));
     else q.delete("domain");
     if (present) q.set("layout", layout);
     else q.delete("layout");
@@ -148,8 +149,9 @@ export default function App() {
   const drawerOpen = selectedProject !== null;
   const selectedIncidentId = view === "incidents" ? params[0] || null : null;
   const [filterState, setFilterState] = useState(() => {
-    const { domain } = readRoadmapUrlOptions();
-    return domain ? { ...INITIAL_FILTER_STATE, domain } : INITIAL_FILTER_STATE;
+    const { domains } = readRoadmapUrlOptions();
+    const ids = String(domains || "").split(",").map((d) => d.trim()).filter((d) => d && d !== "all");
+    return ids.length ? { ...INITIAL_FILTER_STATE, domains: new Set(ids) } : INITIAL_FILTER_STATE;
   });
   const [roadmapLayout, setRoadmapLayout] = useState(getInitialLayout);
   const [showAllQuarters, setShowAllQuarters] = useState(false);
@@ -183,7 +185,7 @@ export default function App() {
   }, []);
 
   const handleDomainChange = useCallback((domainId) => {
-    setFilterState((prev) => ({ ...prev, domain: domainId }));
+    setFilterState((prev) => ({ ...prev, domains: toggleDomainSelection(prev.domains, domainId) }));
   }, []);
 
   const handleInitiativeChange = useCallback((initiativeId) => {
@@ -489,8 +491,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    writeRoadmapUrlOptions({ layout: roadmapLayout, present: presenting, domain: filterState.domain });
-  }, [roadmapLayout, presenting, filterState.domain]);
+    writeRoadmapUrlOptions({ layout: roadmapLayout, present: presenting, domains: filterState.domains });
+  }, [roadmapLayout, presenting, filterState.domains]);
 
   // Esc leaves present mode (unless a drawer is open — Esc closes that first).
   useEffect(() => {
@@ -506,7 +508,7 @@ export default function App() {
     const url = writeRoadmapUrlOptions({
       layout: roadmapLayout,
       present: true,
-      domain: filterState.domain,
+      domains: filterState.domains,
     });
     try {
       await navigator.clipboard.writeText(url);
@@ -515,7 +517,7 @@ export default function App() {
     } catch {
       window.prompt("Copy this link:", url);
     }
-  }, [roadmapLayout, filterState.domain]);
+  }, [roadmapLayout, filterState.domains]);
 
   const displayQuarters = useMemo(() => {
     if (showAllQuarters || !quarters.length) return quarters;
@@ -697,7 +699,14 @@ export default function App() {
                         <button
                           key={id}
                           type="button"
-                          className={`present-domains__btn${filterState.domain === id ? " is-active" : ""}`}
+                          className={`present-domains__btn${
+                            (id === "all" ? !filterState.domains : filterState.domains?.has(id))
+                              ? " is-active"
+                              : ""
+                          }`}
+                          aria-pressed={Boolean(
+                            id === "all" ? !filterState.domains : filterState.domains?.has(id)
+                          )}
                           onClick={() => handleDomainChange(id)}
                         >
                           {label}

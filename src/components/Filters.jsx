@@ -16,7 +16,12 @@ function FilterPill({ label, active, teamActive, swatchColor, dotColor, onClick 
     .join(" ");
 
   return (
-    <button type="button" className={className} onClick={onClick}>
+    <button
+      type="button"
+      className={className}
+      aria-pressed={Boolean(active || teamActive)}
+      onClick={onClick}
+    >
       {swatchColor ? (
         <>
           <span className="filter-pill__swatch" style={{ background: swatchColor }} />
@@ -255,7 +260,11 @@ export default function Filters({
           <FilterPill
             key={domain.id}
             label={domain.label}
-            active={filterState.domain === domain.id}
+            teamActive={
+              domain.id === "all"
+                ? !filterState.domains || filterState.domains.size === 0
+                : Boolean(filterState.domains?.has(domain.id))
+            }
             onClick={() => onDomainChange(domain.id)}
           />
         ))}
