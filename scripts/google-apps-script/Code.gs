@@ -1853,7 +1853,6 @@ function validateOrgRow_(row, org) {
   } else {
     if (row.status === 'Assigned' && !row.personName) throw new Error('Person Name is required.');
     if (row.status === 'Open' && (row.personName || row.personId)) throw new Error('Open positions must not contain a person.');
-    if (role.category === 'ENG Team members' && !row.team) throw new Error('Engineering members require a team.');
   }
   org.assignments.forEach(function (other) {
     if (other.id === row.id) return;

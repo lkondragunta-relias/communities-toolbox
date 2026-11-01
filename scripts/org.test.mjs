@@ -4,6 +4,8 @@ import test from "node:test";
 import vm from "node:vm";
 import { DEFAULT_ORGANIZATIONS, DEFAULT_ORG_ROLES, ORG_FIELDS, ORG_HEADERS, assignmentActiveOn, assignmentKey, organizationColor, validOrgDate, validateOrgAssignment } from "../src/config/orgConfig.js";
 import { buildOrganization, filterOrgRows, orgTeamAndPartnerBadges } from "../src/utils/orgUtils.js";
+import { orgCommandDate, parseOrgCommand, prepareOrgCommand, validateOrgCommandPreview } from "../src/utils/orgCommands.js";
+import { chooseOrgConversation, matchOrgText, orgConversationTurn } from "../src/utils/orgConversation.js";
 
 const domains = [{ id: "wound-care", name: "Wound Care" }, { id: "freecme", name: "FreeCME" }];
 const teams = [{ id: "core", label: "Core" }];
@@ -12,6 +14,435 @@ const context = { ...org, domains, teams };
 const assignment = (changes = {}) => ({
   id: "a1", domain: "wound-care", personId: "p1", personName: "Example Person",
   role: "Engineer", team: "core", organization: "Relias", status: "Assigned", notes: "", startDate: "", endDate: "", ...changes,
+});
+
+const commandModel = (entries = [assignment()], overrides = {}) => buildOrganization({
+  domains, teams, org: { ...org, assignments: entries, ...overrides },
+});
+const commandPreview = (input, model = commandModel(), id) => prepareOrgCommand(parseOrgCommand(input), model, id);
+
+test("person teams are optional across chat, model, and backend while allocations require them", () => {
+  const { api } = backend();
+  api.setupProdEngOrgSheet();
+  for (const role of ["Eng leader", "PM", "Engineer", "QA", "Team member"]) {
+    const row = assignment({ id: "", role, team: "" });
+    assert.equal(validateOrgAssignment(row, context), "");
+    const saved = api.saveOrgAssignment_(row);
+    assert(saved.org.assignments.some((entry) => entry.role === role && entry.team === ""));
+    assert.equal(commandPreview(`add Example Person as ${role} for FreeCME`).row.team, "");
+  }
+  assert.match(validateOrgAssignment(assignment({ role: "Team & Partners", personName: "", personId: "", team: "" }), context), /requires a team/);
+  assert.throws(() => api.saveOrgAssignment_(assignment({ id: "", role: "Team & Partners", personName: "", personId: "", team: "" })), /require.*team/i);
+  const model = commandModel();
+  assert.equal(commandPreview("update Example Person: notes Keep team", model).row.team, "core");
+  assert.equal(commandPreview("update Example Person: team blank", model).row.team, "");
+  const question = orgConversationTurn("add Example Person for FreeCME as PM; team Unknown", null, model);
+  assert.equal(question.field, "team");
+  assert.equal(orgConversationTurn("skip", question, model).row.team, "");
+});
+
+test("conversation extracts names domains roles and dates in different orders", () => {
+  const model = commandModel([assignment({ personName: "Janaky Nemmara", role: "PM", team: "" })]);
+  const now = new Date(2032, 10, 1);
+  for (const text of [
+    "Please add Janaky for FreeCME, starting from October 12th",
+    "FreeCME PM Janaky add starting October 12th",
+    "starting October 12th, add Janaky PM FreeCME",
+    "role: PM, domain: FreeCME, name: Janaky, add",
+    "Janaky FreeCME please include PM",
+  ]) {
+    const result = orgConversationTurn(text, null, model, now);
+    assert.equal(result.kind, "preview", `${text}: ${JSON.stringify(result)}`);
+    assert.equal(result.row.personName, "Janaky Nemmara");
+    assert.equal(result.row.domain, "freecme");
+    assert.equal(result.row.role, "PM");
+    assert.equal(result.row.endDate, "");
+    if (/October/.test(text)) assert.equal(result.row.startDate, "2032-10-12");
+  }
+});
+
+test("conversation confirms close spellings and retains the other supplied information", () => {
+  const model = commandModel([assignment({ personName: "Janaky Nemmara", role: "PM", team: "", domain: "freecme" })]);
+  let result = orgConversationTurn("add Janaky to Wond Care as PM; start October 12", null, model, new Date(2032, 10, 1));
+  assert.equal(result.kind, "clarify");
+  assert.equal(result.field, "domain");
+  assert(result.options.some((option) => option.value === "wound-care"));
+  result = chooseOrgConversation(result, "wound-care", model);
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.startDate, "2032-10-12");
+  result = orgConversationTurn("add Janakyy Nemmara to Wound Care as PM", null, model);
+  assert.equal(result.kind, "clarify");
+  assert.equal(result.field, "target");
+  result = chooseOrgConversation(result, "Janaky Nemmara", model);
+  assert.equal(result.row.personId, "p1");
+});
+
+test("conversation gathers missing information over typed replies and does not reset dates", () => {
+  const model = commandModel();
+  let result = orgConversationTurn("add", null, model);
+  assert.equal(result.field, "target");
+  result = orgConversationTurn("Example", result, model);
+  assert.equal(result.field, "domain");
+  result = orgConversationTurn("FreeCME", result, model);
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.startDate, "");
+  assert.equal(result.row.endDate, "");
+  result = orgConversationTurn("Example Person FreeCME PM starting October 12", null, model, new Date(2032, 10, 1));
+  assert.equal(result.field, "action");
+  result = orgConversationTurn("add", result, model);
+  assert.equal(result.row.startDate, "2032-10-12");
+});
+
+test("conversation keeps invalid date requests until corrected and validates overlapping entries", () => {
+  const model = commandModel();
+  let result = orgConversationTurn("FreeCME PM Example Person add starting February 30", null, model, new Date(2032, 10, 1));
+  assert.equal(result.field, "startDate");
+  result = orgConversationTurn("still wrong", result, model);
+  assert.equal(result.field, "startDate");
+  result = orgConversationTurn("October 12", result, model, new Date(2032, 10, 1));
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.startDate, "2032-10-12");
+  result = orgConversationTurn("add Example Person to Wound Care as Engineer; team Core", null, model);
+  assert.equal(result.field, "correction");
+  result = orgConversationTurn("domain FreeCME", result, model);
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.domain, "freecme");
+});
+
+test("conversation confirms new identities without requiring a team", () => {
+  const model = commandModel();
+  let result = orgConversationTurn("add New Person to FreeCME as Engineer; start Oct 12", null, model, new Date(2032, 10, 1));
+  assert.equal(result.field, "target");
+  assert(result.options.some((option) => option.value === "new person: New Person"));
+  result = chooseOrgConversation(result, "new person: New Person", model);
+  assert.equal(result.field, "organization");
+  result = orgConversationTurn("Relias", result, model);
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.personName, "New Person");
+  assert.equal(result.row.startDate, "2032-10-12");
+});
+
+test("conversation supports assignment choice replies cancellation and uncertain matches", () => {
+  const model = commandModel([assignment(), assignment({ id: "a2", domain: "freecme" })]);
+  let result = orgConversationTurn("update Example Person: notes Ready", null, model);
+  assert.equal(result.kind, "choose");
+  result = orgConversationTurn("2", result, model);
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.id, "a2");
+  assert.equal(orgConversationTurn("cancel", result, model).kind, "cancelled");
+  const matched = matchOrgText("Wond Care", domains, ["id", "name"]);
+  assert.equal(matched.exact, false);
+  assert.equal(matched.matches[0].id, "wound-care");
+  const names = [{ name: "Janaky Nemmara" }, { name: "Janaky Other" }];
+  assert.equal(matchOrgText("Janaky", names, ["name"], true).matches.length, 2);
+  assert.equal(matchOrgText("Janakyy", names, ["name"], true).exact, false);
+  assert.equal(matchOrgText("Janakyy", names, ["name"], true).matches.length, 2);
+});
+
+test("conversation accepts extra details in a clarification reply and blocks destructive requests", () => {
+  const model = commandModel();
+  let result = orgConversationTurn("add Example Person", null, model);
+  assert.equal(result.field, "domain");
+  result = orgConversationTurn("FreeCME PM starting October 12", result, model, new Date(2032, 10, 1));
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.role, "PM");
+  assert.equal(result.row.startDate, "2032-10-12");
+  for (const text of ["update everyone to PM", "add Example Person and add Another Person", "do not add Example Person to FreeCME as PM"]) {
+    assert.equal(orgConversationTurn(text, null, model).kind, "clarify");
+  }
+});
+
+test("conversation suggests partial domain names and understands engineering leader synonyms", () => {
+  const model = commandModel([assignment({ personName: "Mike Toothaker" })]);
+  let result = orgConversationTurn("Please add Mike as Engineering leader along with me on FreeCME", null, model);
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.role, "Eng leader");
+  assert.equal(result.row.personName, "Mike Toothaker");
+  assert.equal(result.row.startDate, "");
+  result = orgConversationTurn("add Mike as Engineering leader for Wound", null, model);
+  assert.equal(result.field, "domain");
+  assert(result.options.some((option) => option.value === "wound-care"));
+  result = orgConversationTurn("Wound Care", result, model);
+  assert.equal(result.kind, "preview");
+  assert.equal(result.row.domain, "wound-care");
+});
+
+test("guided commands preview explicit assignment dates without mutating the directory", () => {
+  const model = commandModel();
+  const before = JSON.stringify(model);
+  const preview = commandPreview("update Example Person in Wound Care: start 2026-12-15; end blank", model);
+  assert.equal(preview.kind, "preview");
+  assert.equal(preview.row.startDate, "2026-12-15");
+  assert.equal(preview.row.endDate, "");
+  assert.equal(preview.row.id, "a1");
+  assert.equal(preview.row.personId, "p1");
+  assert.deepEqual(preview.differences.map((item) => item.field), ["startDate"]);
+  assert.equal(JSON.stringify(model), before);
+  assert.equal(commandPreview("end Example Person in Wound Care on 2026-12-31").row.endDate, "2026-12-31");
+});
+
+test("guided commands accept configured references case-insensitively, IDs, and all editable fields", () => {
+  const preview = commandPreview("UPDATE Example Person: domain FREECME; role pm; team blank; organization BrillMark; name New Person; status assigned; notes New work; start date: 2026-11-01; end date=2026-12-31");
+  assert.equal(preview.row.domain, "freecme");
+  assert.equal(preview.row.role, "PM");
+  assert.equal(preview.row.organization, "BrillMark");
+  assert.equal(preview.row.team, "");
+  assert.equal(preview.row.personName, "New Person");
+  assert.equal(preview.row.personId, "");
+  assert.equal(preview.row.notes, "New work");
+  assert.equal(commandPreview("update Example Person in wound-care: notes Changed").row.domain, "wound-care");
+});
+
+test("guided commands require selection across domains, repeated periods, and duplicate names", () => {
+  const entries = [
+    assignment({ endDate: "2026-11-30" }),
+    assignment({ id: "a2", startDate: "2026-12-01" }),
+    assignment({ id: "a3", domain: "freecme" }),
+    assignment({ id: "a4", personId: "p2", organization: "BrillMark" }),
+  ];
+  const model = commandModel(entries);
+  const command = "update Example Person: end 2026-12-31";
+  assert.equal(commandPreview(command, model).candidates.length, 4);
+  assert.equal(commandPreview("update Example in Wound Care: notes Later", model).candidates.length, 3);
+  assert.throws(() => commandPreview(command, model, "a2"), /already exists/);
+  const preview = commandPreview("update Example Person: start 2026-12-01; end 2026-12-31", model, "a2");
+  assert.equal(preview.row.id, "a2");
+  assert.equal(preview.row.startDate, "2026-12-01");
+  assert.throws(() => commandPreview(command, model, "missing"), /no longer uniquely/);
+});
+
+test("guided commands search historical rows even when no people are active", () => {
+  const model = buildOrganization({ domains, teams, org: { ...org, assignments: [assignment({ endDate: "2026-01-01" })] } }, "2026-12-15");
+  assert.equal(model.people.length, 0);
+  const preview = commandPreview("update Example Person: notes Historical", model);
+  assert.equal(preview.row.endDate, "");
+});
+
+test("guided commands default every omitted date to blank on adds and updates", () => {
+  const model = commandModel([assignment({ startDate: "2026-11-01", endDate: "2026-11-30" })]);
+  const cleared = commandPreview("update Example Person: notes Undated", model);
+  assert.equal(cleared.row.startDate, "");
+  assert.equal(cleared.row.endDate, "");
+  assert.deepEqual(cleared.differences.map((item) => item.field), ["notes", "startDate", "endDate"]);
+  const startOnly = commandPreview("update Example Person: start 2026-12-15", model);
+  assert.equal(startOnly.row.startDate, "2026-12-15");
+  assert.equal(startOnly.row.endDate, "");
+  const endOnly = commandPreview("end Example Person on 2026-12-31", model);
+  assert.equal(endOnly.row.startDate, "");
+  assert.equal(endOnly.row.endDate, "2026-12-31");
+  const added = commandPreview("add Example Person as PM for FreeCME", model);
+  assert.equal(added.row.startDate, "");
+  assert.equal(added.row.endDate, "");
+});
+
+test("guided commands reject unknown and ambiguous references instead of inventing them", () => {
+  for (const clause of ["domain Unknown", "team Unknown", "role Unknown", "organization Unknown", "status Unknown"]) {
+    assert.throws(() => commandPreview(`update Example Person: ${clause}`), /was not found/);
+  }
+  const model = commandModel([], { roles: [...DEFAULT_ORG_ROLES, { name: "pm", category: "PM" }] });
+  assert.throws(() => commandPreview("assign New Person to Wound Care as PM; organization Relias", model), /ambiguous/);
+  assert.throws(() => commandPreview("update Missing Person: end 2026-12-31"), /No matching/);
+});
+
+test("guided commands add one person assignment with explicit role and team", () => {
+  const preview = commandPreview("assign New Person to FreeCME as Engineer; organization Relias; team Core; start 2026-12-15");
+  assert.equal(preview.before, null);
+  assert.equal(preview.row.id, "");
+  assert.equal(preview.row.personId, "");
+  assert.equal(preview.row.domain, "freecme");
+  assert.equal(preview.row.team, "core");
+  assert.equal(preview.row.startDate, "2026-12-15");
+  assert.equal(preview.row.status, "Assigned");
+  const known = commandPreview("assign Example Person to FreeCME as PM");
+  assert.equal(known.row.organization, "Relias");
+  assert.equal(known.row.personId, "p1");
+  assert.equal(commandPreview("assign New Person to FreeCME as PM").field, "organization");
+  assert.equal(commandPreview("assign New Person to FreeCME as Engineer; organization Relias").row.team, "");
+});
+
+test("guided commands accept add person as role for domain and resolve unique short names", () => {
+  const model = commandModel([assignment({ personName: "Kamal Bisht" })]);
+  const preview = commandPreview("add Kamal as PM for FreeCME", model);
+  assert.equal(preview.row.personName, "Kamal Bisht");
+  assert.equal(preview.row.personId, "p1");
+  assert.equal(preview.row.role, "PM");
+  assert.equal(preview.row.domain, "freecme");
+  assert.throws(() => commandPreview("add Kamal as PM for FreeCME", commandModel([
+    assignment({ personName: "Kamal Bisht" }),
+    assignment({ id: "a2", personId: "p2", personName: "Kamal Other", domain: "freecme" }),
+  ])), /Several people/);
+});
+
+test("guided commands preserve identity on updates but do not rename other rows", () => {
+  const model = commandModel([assignment(), assignment({ id: "a2", domain: "freecme" })]);
+  const renamed = commandPreview("update Example Person in Wound Care: name Another Person", model);
+  assert.equal(renamed.row.personId, "");
+  assert.equal(model.assignments[1].personName, "Example Person");
+  const reused = commandPreview("update Example Person in Wound Care: name Existing Person", commandModel([
+    assignment(), assignment({ id: "a2", personId: "p2", personName: "Existing Person", domain: "freecme" }),
+  ]));
+  assert.equal(reused.row.personId, "p2");
+});
+
+test("guided commands do not merge different identities with identical names", () => {
+  const model = commandModel([
+    assignment({ endDate: "2026-11-30" }),
+    assignment({ id: "a2", personId: "p2", startDate: "2026-12-01" }),
+  ]);
+  const changed = commandPreview("update Example Person: notes Correct person; start 2026-12-01", model, "a2");
+  assert.equal(changed.row.personId, "p2");
+  assert.throws(() => commandPreview("assign Example Person to FreeCME as PM", model), /Several people/);
+});
+
+test("guided commands support selecting team allocations, open roles, and explicit UX None", () => {
+  const model = commandModel([
+    assignment({ role: "Team & Partners", personId: "", personName: "" }),
+    assignment({ id: "a2", role: "PM", personId: "", personName: "", status: "Open" }),
+    assignment({ id: "a3", role: "UX", personId: "", personName: "", status: "Not applicable", team: "", organization: "" }),
+  ]);
+  assert.equal(commandPreview("update team allocation in Wound Care: end 2026-12-31", model).row.id, "a1");
+  assert.equal(commandPreview("update open PM in Wound Care: notes Recruiting", model).row.id, "a2");
+  assert.equal(commandPreview("update UX None in Wound Care: start 2026-12-01", model).row.id, "a3");
+  assert.equal(commandPreview("update assignment a2: notes Hiring", model).row.id, "a2");
+  assert.throws(() => commandPreview("update Example Person: status Open"), /must not contain a person/);
+  assert.equal(commandPreview("update Example Person: status Open; name blank").row.personId, "");
+});
+
+test("guided commands strictly validate dates, periods, overlapping assignments, and no-op changes", () => {
+  for (const date of ["2026-02-29", "next winter", "12/10/2026", "December 32"]) {
+    assert.throws(() => commandPreview(`update Example Person: start ${date}`), /valid calendar|couldn't read|could mean/);
+  }
+  assert.throws(() => commandPreview("update Example Person: start 2026-12-31; end 2026-12-15"), /on or after/);
+  assert.throws(() => commandPreview("update Example Person: role Engineer"), /Nothing needs saving/);
+  assert.throws(() => commandPreview("assign Example Person to Wound Care as Engineer; team Core"), /already exists/);
+});
+
+test("conversational dates normalize named months and current-year dates without locale guessing", () => {
+  const now = new Date(2032, 10, 1);
+  for (const value of ["October 12th", "12 October", "Oct. 12", "12th Oct", "October 12, 2032", "2032-10-12"]) assert.equal(orgCommandDate(value, now), "2032-10-12");
+  assert.equal(orgCommandDate("12/15", now), "2032-12-15");
+  assert.equal(orgCommandDate("15/12/2033", now), "2033-12-15");
+  assert.equal(orgCommandDate("Feb 29", now), "2032-02-29");
+  assert.equal(orgCommandDate("January 1st", new Date(2033, 11, 31)), "2033-01-01");
+  assert.equal(orgCommandDate("Sept 5th 2034", now), "2034-09-05");
+  assert.equal(orgCommandDate("null", now), "");
+  for (const value of ["02/03", "2032-13-01", "October 0", "February 29 2033", "October 12 32", "later", "Foo 12"]) assert.throws(() => orgCommandDate(value, now));
+});
+
+test("the conversational add example infers one known role and previews the current year", () => {
+  const model = commandModel([assignment({ personName: "Janaky Nemmara", role: "PM", team: "" })]);
+  const command = parseOrgCommand("Can you please add Janaky for FreeCME, starting from October 12th", new Date(2032, 10, 1));
+  assert.equal(command.changes.startDate, "2032-10-12");
+  const preview = prepareOrgCommand(command, model);
+  assert.equal(preview.kind, "preview");
+  assert.equal(preview.row.personName, "Janaky Nemmara");
+  assert.equal(preview.row.role, "PM");
+  assert.equal(preview.row.organization, "Relias");
+  assert.equal(preview.row.startDate, "2032-10-12");
+  assert.equal(preview.row.endDate, "");
+});
+
+test("conversational commands support polite wording, flexible separators, and natural date boundaries", () => {
+  const now = new Date(2032, 10, 1);
+  for (const input of [
+    "Please add Example Person as PM for FreeCME, starting from October 12th and ending on December 31.",
+    "Could you assign Example Person to FreeCME as PM starting from October 12th, end date December 31",
+    "add Example Person to FreeCME as PM\nstart October 12\nend December 31",
+    "add Example Person for FreeCME; role PM; start 12 October; end 31 December",
+    "add Example Person for FreeCME as PM starting October 12th ending December 31st",
+  ]) {
+    const parsed = parseOrgCommand(input, now);
+    const preview = prepareOrgCommand(parsed, commandModel());
+    assert.equal(preview.row.role, "PM");
+    assert.equal(preview.row.startDate, "2032-10-12");
+    assert.equal(preview.row.endDate, "2032-12-31");
+  }
+  for (const input of [
+    "Please update Example Person in Wound Care, start date to October 12th and end date to December 31",
+    "edit Example Person for Wound Care, starting from Oct 12, ending on Dec 31",
+    "update Example Person in Wound Care: start October 12 and end December 31",
+  ]) {
+    const preview = prepareOrgCommand(parseOrgCommand(input, now), commandModel());
+    assert.equal(preview.row.startDate, "2032-10-12");
+    assert.equal(preview.row.endDate, "2032-12-31");
+  }
+  assert.equal(parseOrgCommand("Set Example Person's end date to December 31", now).changes.endDate, "2032-12-31");
+  assert.equal(parseOrgCommand("Please end Example Person for Wound Care on Oct 12th 2034", now).changes.endDate, "2034-10-12");
+  assert.equal(parseOrgCommand('update Example Person: notes "Discuss start date and team changes"', now).changes.notes, "Discuss start date and team changes");
+});
+
+test("missing roles prompt for a choice instead of inventing a responsibility", () => {
+  const model = commandModel([assignment(), assignment({ id: "a2", role: "PM", domain: "freecme", team: "" })]);
+  const command = parseOrgCommand("Please add Example Person for FreeCME, starting from October 12");
+  const result = prepareOrgCommand(command, model);
+  assert.equal(result.kind, "clarify");
+  assert.equal(result.field, "role");
+  assert(result.options.includes("PM"));
+  assert(!result.options.includes("Team & Partners"));
+  const resolved = prepareOrgCommand({ ...command, changes: { ...command.changes, role: "UX" } }, model);
+  assert.equal(resolved.kind, "preview");
+  assert.equal(resolved.row.role, "UX");
+  assert.equal(orgConversationTurn("please delete Example Person", null, model).field, "domain");
+});
+
+test("conversation removes exactly one role assignment with stale-preview checks", () => {
+  const model = commandModel([assignment({ role: "Eng leader", team: "" }), assignment({ id: "a2", role: "PM", team: "" }), assignment({ id: "a3", domain: "freecme" })]);
+  const result = orgConversationTurn("remove Example Person from Eng leader on Wound Care", null, model);
+  assert.equal(result.kind, "preview");
+  assert.equal(result.action, "remove");
+  assert.equal(result.row.id, "a1");
+  assert.equal(validateOrgCommandPreview(result, model).id, "a1");
+  assert.throws(() => validateOrgCommandPreview(result, commandModel([assignment({ role: "Eng leader", notes: "Changed", team: "" })])), /changed after/);
+  const ambiguous = orgConversationTurn("delete Example Person from Wound Care", null, model);
+  assert.equal(ambiguous.kind, "choose");
+  assert.equal(ambiguous.candidates.length, 2);
+  const chosen = orgConversationTurn("2", ambiguous, model);
+  assert.equal(chosen.row.id, "a2");
+  assert.equal(chosen.action, "remove");
+  const missingDomain = orgConversationTurn("remove Example Person", null, model);
+  assert.equal(missingDomain.field, "domain");
+  assert.equal(orgConversationTurn("FreeCME", missingDomain, model).row.id, "a3");
+  assert.equal(orgConversationTurn("remove everyone from Wound Care", null, model).kind, "clarify");
+  assert.equal(orgConversationTurn("cancel", result, model).kind, "cancelled");
+});
+
+test("incomplete new-person requests clarify organization and role without requiring team", () => {
+  let command = parseOrgCommand("Please add New Person for FreeCME, starting from October 12", new Date(2032, 10, 1));
+  const model = commandModel();
+  for (const [field, value] of [["organization", "Relias"], ["role", "Engineer"]]) {
+    const result = prepareOrgCommand(command, model);
+    assert.equal(result.kind, "clarify");
+    assert.equal(result.field, field);
+    assert(result.options.includes(value));
+    command = { ...command, changes: { ...command.changes, [field]: value } };
+  }
+  const preview = prepareOrgCommand(command, model);
+  assert.equal(preview.row.startDate, "2032-10-12");
+  assert.equal(preview.row.endDate, "");
+  assert.equal(preview.row.personName, "New Person");
+  assert.equal(preview.row.team, "");
+  assert.throws(() => prepareOrgCommand(parseOrgCommand("add New Person for FreeCME"), commandModel([], { organizations: [] })), /No organization options/);
+});
+
+test("guided command previews detect changed or removed assignments before save", () => {
+  const preview = commandPreview("update Example Person: end 2026-12-31");
+  assert.equal(validateOrgCommandPreview(preview, commandModel()).endDate, "2026-12-31");
+  assert.throws(() => validateOrgCommandPreview(preview, commandModel([assignment({ notes: "Changed elsewhere" })])), /changed after your preview/);
+  assert.throws(() => validateOrgCommandPreview(preview, commandModel([])), /changed after your preview/);
+  assert.throws(() => validateOrgCommandPreview(preview, commandModel([assignment(), assignment()])), /changed after your preview/);
+  assert.throws(() => validateOrgCommandPreview(preview, commandModel([assignment()], { roles: [] })), /configured role/);
+  const added = commandPreview("assign New Person to FreeCME as PM; organization Relias");
+  assert.throws(() => validateOrgCommandPreview(added, commandModel([assignment({ id: "a2", domain: "freecme", role: "PM", team: "", personId: "p2", personName: "New Person" })])), /already exists/);
+});
+
+test("guided commands preserve quoted notes and reject unparsed instructions", () => {
+  assert.equal(commandPreview('update Example Person: notes "Contains; a semicolon"; end blank').row.notes, "Contains; a semicolon");
+  for (const input of [
+    "", "delete Example Person", "update Example Person: unknown value", "update Example Person: id a2",
+    "update Example Person: start blank; start date 2026-12-15", "update Example Person: notes Hello;",
+    'update Example Person: notes "Unclosed', "assign New Person to FreeCME as PM; role UX",
+    "end Example Person on 2026-12-31; notes ignored", "x".repeat(2001),
+  ]) assert.throws(() => parseOrgCommand(input));
 });
 
 test("assignment dates have inclusive boundaries and independent open limits", () => {
@@ -215,7 +646,7 @@ test("invalid sheet entries are flagged rather than silently counted", () => {
 
 test("validation enforces domain, role, organization, open-position and member rules", () => {
   assert.equal(validateOrgAssignment(assignment(), context), "");
-  for (const changes of [{ domain: "missing" }, { role: "missing" }, { organization: "" }, { team: "" }, { status: "Open" }]) {
+  for (const changes of [{ domain: "missing" }, { role: "missing" }, { organization: "" }, { status: "Open" }]) {
     assert(validateOrgAssignment(assignment(changes), context));
   }
   assert(validateOrgAssignment(assignment({ role: "Team & Partners" }), context));
