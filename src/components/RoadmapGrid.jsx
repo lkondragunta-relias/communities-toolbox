@@ -3,7 +3,6 @@ import {
   buildYearSpans,
   dateToTimelinePosition,
   getRoadmapRows,
-  isFilterActive,
   rowMatchesDomainFilter,
   summarizeDomain,
   timelinePositionToCss,
@@ -62,14 +61,16 @@ export default function RoadmapGrid({
   onToggleDone,
   today = new Date(),
 }) {
-  const rows = getRoadmapRows(data, quarters);
+  // Unselected domains are hidden outright rather than faded out.
+  const rows = getRoadmapRows(data, quarters).filter((row) =>
+    rowMatchesDomainFilter(row.id, filterState)
+  );
   const quarterCount = quarters.length;
   const todayInRange =
     quarterCount > 0 && today >= quarters[0].start && today <= quarters[quarterCount - 1].end;
   const todayPos = todayInRange ? dateToTimelinePosition(today, quarters, "start") : null;
   const currentQi = todayInRange ? Math.min(quarterCount - 1, Math.floor(todayPos)) : -1;
   const yearSpans = buildYearSpans(quarters);
-  const filterActive = isFilterActive(filterState);
 
   const dragRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -222,15 +223,13 @@ export default function RoadmapGrid({
       {rows.map((row, rowIndex) => {
         const gridRow = HEADER_ROWS + rowIndex + 1;
         const laneCount = Math.max(1, ...row.initiatives.map((item) => item.lane + 1));
-        const labelDimmed =
-          filterActive && !rowMatchesDomainFilter(row.id, filterState);
         const rowOverlay = overlay && overlay.domain === row.id ? overlay : null;
         const summary = summarizeDomain(data[row.id], today);
 
         return (
           <Fragment key={row.id}>
             <div
-              className={`roadmap__row-label${labelDimmed ? " roadmap__row-label--dimmed" : ""}`}
+              className="roadmap__row-label"
               style={{ gridColumn: "1", gridRow: String(gridRow) }}
             >
               <span className="roadmap__row-name">{row.label}</span>

@@ -447,7 +447,7 @@ export function patchInitiativeInData(data, domain, initiativeId, updates) {
 }
 
 export function initiativeMatchesFilter(item, category, filterState) {
-  if (filterState.domain !== "all" && category !== filterState.domain) return false;
+  if (!rowMatchesDomainFilter(category, filterState)) return false;
   if (
     filterState.initiatives &&
     filterState.initiatives.size > 0 &&
@@ -463,21 +463,36 @@ export function initiativeMatchesFilter(item, category, filterState) {
 }
 
 export function rowMatchesDomainFilter(category, filterState) {
-  if (filterState.domain === "all") return true;
-  return filterState.domain === category;
+  const selected = filterState?.domains;
+  return !selected || selected.size === 0 || selected.has(category);
+}
+
+/** Toggle one domain in a multi-select; "all" (or emptying it) clears the selection. */
+export function toggleDomainSelection(selected, domainId) {
+  if (!domainId || domainId === "all") return null;
+  const next = new Set(selected || []);
+  if (next.has(domainId)) next.delete(domainId);
+  else next.add(domainId);
+  return next.size > 0 ? next : null;
+}
+
+/** Filters that pick out individual initiatives (everything except the domain selection). */
+export function isItemFilterActive(filterState) {
+  return Boolean(
+    (filterState.initiatives && filterState.initiatives.size > 0) ||
+      (filterState.teams && filterState.teams.size > 0) ||
+      (filterState.statuses && filterState.statuses.size > 0) ||
+      (filterState.priorities && filterState.priorities.size > 0) ||
+      (filterState.confidences && filterState.confidences.size > 0)
+  );
 }
 
 /** @deprecated use rowMatchesDomainFilter */
 export const rowMatchesTeamFilter = rowMatchesDomainFilter;
 
 export function isFilterActive(filterState) {
-  return (
-    filterState.domain !== "all" ||
-    (filterState.initiatives && filterState.initiatives.size > 0) ||
-    (filterState.teams && filterState.teams.size > 0) ||
-    (filterState.statuses && filterState.statuses.size > 0) ||
-    (filterState.priorities && filterState.priorities.size > 0) ||
-    (filterState.confidences && filterState.confidences.size > 0)
+  return Boolean(
+    (filterState.domains && filterState.domains.size > 0) || isItemFilterActive(filterState)
   );
 }
 
@@ -489,8 +504,9 @@ export function getQuarterRangeLabel(quarters) {
 }
 
 export function getDomainScopeLabel(filterState) {
-  if (!filterState || filterState.domain === "all") return "all domains";
-  return formatDomainLabel(filterState.domain);
+  const selected = filterState?.domains;
+  if (!selected || selected.size === 0) return "all domains";
+  return [...selected].map(formatDomainLabel).join(", ");
 }
 
 /** e.g. "Q1 2026 — Q4 2030 · all domains" from loaded data + active filters */
@@ -502,7 +518,7 @@ export function getSubtitle(quarters, filterState) {
 }
 
 export const INITIAL_FILTER_STATE = {
-  domain: "all",
+  domains: null,
   initiatives: null,
   teams: null,
   statuses: null,
