@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatTimelineRange } from "../utils/roadmapUtils";
+import { formatQuarterRange, formatTimelineRange } from "../utils/roadmapUtils";
+import { ConfidenceBadge, DoneToggle } from "./RoadmapBits";
 import { resolvePriority } from "../config/priorityConfig";
 
 function positionTooltip(tooltipEl, target) {
@@ -36,6 +37,7 @@ export default function InitiativeTooltip({
   onDeleteError,
   onTooltipEnter,
   onTooltipLeave,
+  onToggleDone,
 }) {
   const tooltipRef = useRef(null);
   const [deleting, setDeleting] = useState(false);
@@ -134,13 +136,14 @@ export default function InitiativeTooltip({
           <span className="initiative-tooltip__name">{item.name}</span>
           {item.timeline ? (
             <span className="initiative-tooltip__timeline">
-              {formatTimelineRange(item.timeline)}
+              {formatQuarterRange(item.timeline)} · {formatTimelineRange(item.timeline)}
             </span>
           ) : null}
           <div className="initiative-tooltip__badges">
             {displayStatus ? (
               <span className="initiative-tooltip__status-label">{displayStatus}</span>
             ) : null}
+            <ConfidenceBadge value={item.confidence} compact />
             {item.priority
               ? (() => {
                   const p = resolvePriority(item.priority, priorities);
@@ -170,6 +173,15 @@ export default function InitiativeTooltip({
             >
               Open link ↗
             </a>
+          ) : null}
+          {canEditStatus && onToggleDone ? (
+            <DoneToggle
+              item={{ ...item, status: displayStatus }}
+              domain={domain}
+              onToggle={onToggleDone}
+              size="sm"
+              withLabel
+            />
           ) : null}
           {canEditStatus && statuses.length > 0 ? (
             <label className="initiative-tooltip__status-field">

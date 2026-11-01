@@ -1,9 +1,11 @@
 import { useEffect, useRef } from "react";
 import {
   formatDomainLabel,
+  formatQuarterRange,
   formatTimelineRange,
   parseInitiativeTeams,
 } from "../utils/roadmapUtils";
+import { ConfidenceBadge, DoneToggle } from "./RoadmapBits";
 import { resolveStatus } from "../config/statusConfig";
 import { resolvePriority } from "../config/priorityConfig";
 
@@ -24,6 +26,7 @@ export default function ProjectDetail({
   onEdit,
   onDelete,
   onClose,
+  onToggleDone,
 }) {
   const item = selected
     ? (data[selected.domain] || []).find((p) => p.id === selected.id)
@@ -79,6 +82,7 @@ export default function ProjectDetail({
                   {item.status}
                 </span>
               ) : null}
+              <ConfidenceBadge value={item.confidence} />
               {priority ? (
                 <span className="detail__priority" style={{ "--priority-color": priority.color }}>
                   {priority.label} priority
@@ -88,7 +92,12 @@ export default function ProjectDetail({
 
             <div className="detail__body">
               <Field label="Domain">{formatDomainLabel(item.domain || selected.domain)}</Field>
-              <Field label="Timeline">{formatTimelineRange(item.timeline) || "—"}</Field>
+              <Field label="When">
+                {formatQuarterRange(item.timeline) || "—"}
+                {item.timeline?.[0] ? (
+                  <span className="detail__subtle"> · {formatTimelineRange(item.timeline)}</span>
+                ) : null}
+              </Field>
               <Field label="Owner">{item.owner || "—"}</Field>
               <Field label="Teams">{teams.length ? teams.join(", ") : "—"}</Field>
               {typeof item.progress === "number" ? (
@@ -116,6 +125,14 @@ export default function ProjectDetail({
 
             {(canEdit || canDelete) && (
               <footer className="detail__footer">
+                {canEdit && onToggleDone ? (
+                  <DoneToggle
+                    item={item}
+                    domain={selected.domain}
+                    onToggle={onToggleDone}
+                    withLabel
+                  />
+                ) : null}
                 {canEdit ? (
                   <button
                     type="button"

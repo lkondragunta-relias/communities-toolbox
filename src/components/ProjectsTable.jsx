@@ -3,12 +3,14 @@ import {
   getDomainKeys,
   formatDomainLabel,
   initiativeMatchesFilter,
-  formatTimelineRange,
+  formatQuarterRange,
   parseDate,
   parseInitiativeTeams,
 } from "../utils/roadmapUtils";
 import { resolveStatus } from "../config/statusConfig";
 import { resolvePriority } from "../config/priorityConfig";
+import { CONFIDENCE_LEVELS, resolveConfidence } from "../config/confidenceConfig";
+import { ConfidenceBadge } from "./RoadmapBits";
 
 const COLUMNS = [
   { key: "id", label: "ID" },
@@ -16,6 +18,7 @@ const COLUMNS = [
   { key: "domain", label: "Domain" },
   { key: "status", label: "Status" },
   { key: "priority", label: "Priority" },
+  { key: "confidence", label: "Confidence" },
   { key: "owner", label: "Owner" },
   { key: "teams", label: "Teams" },
   { key: "start", label: "Timeline" },
@@ -51,6 +54,10 @@ function compareRows(a, b, key, dir, priorityRank) {
       av = priorityRank.get(String(a.priority || "").toLowerCase()) || 0;
       bv = priorityRank.get(String(b.priority || "").toLowerCase()) || 0;
       return (av - bv) * mul;
+    case "confidence": {
+      const rank = (v) => CONFIDENCE_LEVELS.findIndex((c) => c.label === resolveConfidence(v));
+      return (rank(a.confidence) - rank(b.confidence)) * mul;
+    }
     case "start":
       av = parseDate(a.timeline?.[0])?.getTime() || 0;
       bv = parseDate(b.timeline?.[0])?.getTime() || 0;
@@ -181,10 +188,13 @@ export default function ProjectsTable({
                       <span className="projects-table__muted">—</span>
                     )}
                   </td>
+                  <td>
+                    <ConfidenceBadge value={row.confidence} compact />
+                  </td>
                   <td>{row.owner || <span className="projects-table__muted">—</span>}</td>
                   <td>{teams || <span className="projects-table__muted">—</span>}</td>
                   <td className="projects-table__timeline">
-                    {formatTimelineRange(row.timeline) || "—"}
+                    {formatQuarterRange(row.timeline) || "—"}
                   </td>
                   <td>
                     {row.link ? (
