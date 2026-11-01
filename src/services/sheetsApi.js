@@ -1,5 +1,6 @@
 import { resolveStatusDefinitions } from "../config/statusConfig";
 import { resolvePriorityDefinitions, getValidPriorityLabels } from "../config/priorityConfig";
+import { getValidConfidenceLabels } from "../config/confidenceConfig";
 import { ROADMAP_DEFAULTS } from "../config/roadmapDefaults";
 import { getRoadmap as getLocalRoadmap, postToLocal } from "../db/database";
 
@@ -54,7 +55,7 @@ function resolveTeamFilterDefinitions(payload) {
 /**
  * Accepts a FLAT remote payload (easy to produce from SharePoint/Power Automate):
  *   { projects:[{domain,id,name,description,timelineStart,timelineEnd,status,
- *                teams,owner,priority,link,progress}],
+ *                teams,owner,priority,confidence,link,progress}],
  *     teams:[{id,label,color}], domains:[{id,name}],
  *     statuses:[{id,label,color}], priorities:[{id,label,color}] }
  * and reshapes it into the nested form the UI expects. If the payload is already
@@ -99,6 +100,7 @@ export function normalizeRemotePayload(payload) {
             .filter(Boolean),
       owner: p.owner || "",
       priority: p.priority || "",
+      confidence: p.confidence || "",
       link: p.link || "",
       progress: Number(p.progress) || 0,
     });
@@ -508,6 +510,7 @@ export function validateInitiativeForm(
   const timelineEnd = String(fields.timelineEnd || "").trim();
   const status = String(fields.status || "").trim();
   const priority = String(fields.priority || "").trim();
+  const confidence = String(fields.confidence || "").trim();
   const link = String(fields.link || "").trim();
   const teamIds = normalizeTeamsField(fields.teams ?? fields.cohort);
 
@@ -534,6 +537,10 @@ export function validateInitiativeForm(
 
   if (priority && validPriorityLabels.length > 0 && !validPriorityLabels.includes(priority)) {
     errors.priority = `Priority must be one of: ${validPriorityLabels.join(", ")}.`;
+  }
+
+  if (confidence && !getValidConfidenceLabels().includes(confidence)) {
+    errors.confidence = `Confidence must be one of: ${getValidConfidenceLabels().join(", ")}.`;
   }
 
   if (link && !/^https?:\/\//i.test(link)) {

@@ -106,6 +106,31 @@ db.version(9).stores({ orgTeams: "id" }).upgrade(async (tx) => {
   await tx.table("orgTeams").bulkAdd(await tx.table("teams").toArray());
 });
 
+// v10 adds the project `confidence` field; backfill the demo rows so the
+// local roadmap shows all three confidence styles.
+db.version(10).upgrade(async (tx) => {
+  const seedConfidence = {};
+  SEED_PROJECTS.forEach((p) => {
+    seedConfidence[projectKey(p.domain, p.id)] = p.confidence || "";
+  });
+  const rows = await tx.table("projects").toArray();
+  const existing = new Set(rows.map((row) => row.key));
+  await Promise.all(
+    rows.map((row) => {
+      if (row.confidence || !seedConfidence[row.key]) return null;
+      return tx.table("projects").put({ ...row, confidence: seedConfidence[row.key] });
+    })
+  );
+  // Demo rows around "now" so the current-quarter window isn't empty.
+  const nearTermIds = new Set(["PLAT-4", "PLAT-5", "MKT-3", "MKT-4", "MOB-3", "MOB-4", "MOB-5"]);
+  const added = SEED_PROJECTS.filter(
+    (p) => nearTermIds.has(p.id) && !existing.has(projectKey(p.domain, p.id))
+  );
+  if (rows.length && added.length) {
+    await tx.table("projects").bulkAdd(added.map((p) => ({ ...p, key: projectKey(p.domain, p.id) })));
+  }
+});
+
 function projectKey(domain, id) {
   return `${String(domain).toLowerCase()}::${String(id)}`;
 }
@@ -126,13 +151,20 @@ const SEED_TEAMS = [
 ];
 
 const SEED_PROJECTS = [
-  { domain: "platform", id: "PLAT-1", name: "Auth revamp", description: "Replace legacy auth with SSO and MFA across all apps.", timeline: ["2026-01-12", "2026-03-28"], status: "In Progress", teams: ["core"], owner: "Jane Doe", priority: "High", link: "https://example.com/projects/plat-1", progress: 45 },
-  { domain: "platform", id: "PLAT-2", name: "API gateway", description: "Centralize routing, rate limiting, and observability.", timeline: ["2026-03-02", "2026-06-30"], status: "Future", teams: ["core", "data"], owner: "Sam Lee", priority: "Medium", link: "", progress: 0 },
-  { domain: "platform", id: "PLAT-3", name: "Cost optimization", description: "Right-size infrastructure and cut idle spend.", timeline: ["2026-07-01", "2026-09-15"], status: "At Risk", teams: ["core"], owner: "Priya N.", priority: "High", link: "", progress: 10 },
-  { domain: "marketing", id: "MKT-1", name: "Brand refresh", description: "New visual identity, logo, and site theme.", timeline: ["2026-02-01", "2026-04-30"], status: "Close to done", teams: ["design"], owner: "Alex Park", priority: "Medium", link: "https://example.com/projects/mkt-1", progress: 80 },
-  { domain: "marketing", id: "MKT-2", name: "Q3 campaign", description: "Multi-channel launch campaign for the new release.", timeline: ["2026-06-15", "2026-09-30"], status: "Future", teams: ["design", "data"], owner: "Jordan Kim", priority: "Low", link: "", progress: 0 },
-  { domain: "mobile", id: "MOB-1", name: "Offline mode", description: "Local caching and sync for spotty connectivity.", timeline: ["2026-01-20", "2026-05-10"], status: "In Progress", teams: ["core", "qa"], owner: "Chris Wong", priority: "High", link: "", progress: 55 },
-  { domain: "mobile", id: "MOB-2", name: "Accessibility pass", description: "WCAG AA audit and remediation across screens.", timeline: ["2026-05-01", "2026-07-31"], status: "Done", teams: ["design", "qa"], owner: "Robin Shah", priority: "Medium", link: "", progress: 100 },
+  { domain: "platform", id: "PLAT-1", name: "Auth revamp", description: "Replace legacy auth with SSO and MFA across all apps.", timeline: ["2026-01-12", "2026-03-28"], status: "In Progress", teams: ["core"], owner: "Jane Doe", priority: "High", confidence: "Committed", link: "https://example.com/projects/plat-1", progress: 45 },
+  { domain: "platform", id: "PLAT-2", name: "API gateway", description: "Centralize routing, rate limiting, and observability.", timeline: ["2026-03-02", "2026-06-30"], status: "Future", teams: ["core", "data"], owner: "Sam Lee", priority: "Medium", confidence: "Exploring", link: "", progress: 0 },
+  { domain: "platform", id: "PLAT-3", name: "Cost optimization", description: "Right-size infrastructure and cut idle spend.", timeline: ["2026-07-01", "2026-09-15"], status: "At Risk", teams: ["core"], owner: "Priya N.", priority: "High", confidence: "Likely", link: "", progress: 10 },
+  { domain: "marketing", id: "MKT-1", name: "Brand refresh", description: "New visual identity, logo, and site theme.", timeline: ["2026-02-01", "2026-04-30"], status: "Close to done", teams: ["design"], owner: "Alex Park", priority: "Medium", confidence: "Committed", link: "https://example.com/projects/mkt-1", progress: 80 },
+  { domain: "marketing", id: "MKT-2", name: "Q3 campaign", description: "Multi-channel launch campaign for the new release.", timeline: ["2026-06-15", "2026-09-30"], status: "Future", teams: ["design", "data"], owner: "Jordan Kim", priority: "Low", confidence: "Likely", link: "", progress: 0 },
+  { domain: "mobile", id: "MOB-1", name: "Offline mode", description: "Local caching and sync for spotty connectivity.", timeline: ["2026-01-20", "2026-05-10"], status: "In Progress", teams: ["core", "qa"], owner: "Chris Wong", priority: "High", confidence: "Committed", link: "", progress: 55 },
+  { domain: "mobile", id: "MOB-2", name: "Accessibility pass", description: "WCAG AA audit and remediation across screens.", timeline: ["2026-05-01", "2026-07-31"], status: "Done", teams: ["design", "qa"], owner: "Robin Shah", priority: "Medium", confidence: "Committed", link: "", progress: 100 },
+  { domain: "platform", id: "PLAT-4", name: "SSO + MFA rollout", description: "Roll SSO and MFA out to every customer-facing app.", timeline: ["2026-10-01", "2026-12-31"], status: "In Progress", teams: ["core"], owner: "Jane Doe", priority: "High", confidence: "Committed", link: "", progress: 60 },
+  { domain: "platform", id: "PLAT-5", name: "Observability v2", description: "Unified tracing and alerting across services.", timeline: ["2027-01-01", "2027-03-31"], status: "Future", teams: ["core", "data"], owner: "Sam Lee", priority: "Medium", confidence: "Likely", link: "", progress: 0 },
+  { domain: "marketing", id: "MKT-3", name: "Customer stories hub", description: "Case-study library with filters by industry.", timeline: ["2026-10-15", "2027-01-31"], status: "At Risk", teams: ["design"], owner: "Alex Park", priority: "Medium", confidence: "Committed", link: "", progress: 30 },
+  { domain: "marketing", id: "MKT-4", name: "Community events program", description: "Quarterly virtual meetups — still being scoped.", timeline: ["2027-04-01", "2027-09-30"], status: "Future", teams: ["design"], owner: "Jordan Kim", priority: "Low", confidence: "Exploring", link: "", progress: 0 },
+  { domain: "mobile", id: "MOB-3", name: "Offline mode GA", description: "Ship offline mode to all users.", timeline: ["2026-10-01", "2026-12-15"], status: "Close to done", teams: ["core", "qa"], owner: "Chris Wong", priority: "High", confidence: "Committed", link: "", progress: 85 },
+  { domain: "mobile", id: "MOB-4", name: "Push notification prefs", description: "Per-topic notification settings.", timeline: ["2027-01-15", "2027-05-31"], status: "Future", teams: ["design"], owner: "Robin Shah", priority: "Medium", confidence: "Likely", link: "", progress: 0 },
+  { domain: "mobile", id: "MOB-5", name: "Tablet layout", description: "Two-pane layout for tablets — idea stage.", timeline: ["2027-07-01", "2027-12-31"], status: "Future", teams: ["design"], owner: "", priority: "Low", confidence: "Exploring", link: "", progress: 0 },
 ];
 
 const SEED_SITES = [
@@ -406,6 +438,7 @@ async function addProject(payload) {
     teams: parseTeams(payload.teams),
     owner: String(payload.owner || "").trim(),
     priority: String(payload.priority || "").trim(),
+    confidence: String(payload.confidence || "").trim(),
     link: String(payload.link || "").trim(),
     progress: Number(payload.progress) || 0,
   });
@@ -430,6 +463,7 @@ async function updateProject(payload) {
     teams: parseTeams(payload.teams),
     owner: String(payload.owner ?? row.owner ?? "").trim(),
     priority: String(payload.priority ?? row.priority ?? "").trim(),
+    confidence: String(payload.confidence ?? row.confidence ?? "").trim(),
     link: String(payload.link ?? row.link ?? "").trim(),
   };
   if (payload.progress !== undefined) next.progress = Number(payload.progress) || 0;

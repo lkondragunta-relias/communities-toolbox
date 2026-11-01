@@ -4,6 +4,7 @@ import {
   getDomainsForFilter,
   isFilterActive,
 } from "../utils/roadmapUtils";
+import { CONFIDENCE_LEVELS } from "../config/confidenceConfig";
 
 function FilterPill({ label, active, teamActive, swatchColor, dotColor, onClick }) {
   const className = [
@@ -168,6 +169,7 @@ export default function Filters({
   onTeamsChange,
   onStatusesChange,
   onPrioritiesChange,
+  onConfidencesChange,
   onClear,
 }) {
   const domains = getDomainsForFilter(data);
@@ -180,6 +182,18 @@ export default function Filters({
   const selectedTeams = filterState.teams;
   const selectedStatuses = filterState.statuses;
   const selectedPriorities = filterState.priorities;
+  const selectedConfidences = filterState.confidences;
+
+  const handleConfidencePillClick = (label) => {
+    if (label === "all") {
+      onConfidencesChange?.(null);
+      return;
+    }
+    const next = new Set(selectedConfidences || []);
+    if (next.has(label)) next.delete(label);
+    else next.add(label);
+    onConfidencesChange?.(next.size > 0 ? next : null);
+  };
 
   const handleTeamPillClick = (teamId) => {
     if (teamId === "all") {
@@ -310,6 +324,24 @@ export default function Filters({
               teamActive={selectedPriorities?.has(priority.label)}
               dotColor={priority.color}
               onClick={() => handlePriorityPillClick(priority.label)}
+            />
+          ))}
+        </FilterRow>
+      )}
+
+      {onConfidencesChange && (
+        <FilterRow labelText="Confidence:">
+          <FilterPill
+            label="Any confidence"
+            teamActive={!selectedConfidences || selectedConfidences.size === 0}
+            onClick={() => handleConfidencePillClick("all")}
+          />
+          {CONFIDENCE_LEVELS.map((c) => (
+            <FilterPill
+              key={c.id}
+              label={c.label}
+              teamActive={selectedConfidences?.has(c.label)}
+              onClick={() => handleConfidencePillClick(c.label)}
             />
           ))}
         </FilterRow>
