@@ -767,12 +767,12 @@ export default function App() {
         <ProjectDetail
           data={data}
           selected={selectedProject}
-          canEdit={canEditStatus}
-          canDelete={canDeleteInitiatives}
+          canEdit={canEditRoadmap}
+          canDelete={canDeleteInitiatives && !presentMode}
           onEdit={handleEditInitiative}
           onDelete={handleDeleteFromTable}
           onClose={handleCloseProject}
-          onToggleDone={canEditStatus ? handleToggleDone : undefined}
+          onToggleDone={canEditRoadmap ? handleToggleDone : undefined}
         />
       ) : null}
 

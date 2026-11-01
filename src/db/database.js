@@ -121,12 +121,15 @@ db.version(10).upgrade(async (tx) => {
       return tx.table("projects").put({ ...row, confidence: seedConfidence[row.key] });
     })
   );
-  // Demo rows around "now" so the current-quarter window isn't empty.
+  // Demo rows around "now" so the current-quarter window isn't empty. Only
+  // add them to an untouched demo database, never to one holding real data.
+  const seedKeys = new Set(Object.keys(seedConfidence));
+  const isPureDemo = rows.length > 0 && rows.every((row) => seedKeys.has(row.key));
   const nearTermIds = new Set(["PLAT-4", "PLAT-5", "MKT-3", "MKT-4", "MOB-3", "MOB-4", "MOB-5"]);
   const added = SEED_PROJECTS.filter(
     (p) => nearTermIds.has(p.id) && !existing.has(projectKey(p.domain, p.id))
   );
-  if (rows.length && added.length) {
+  if (isPureDemo && added.length) {
     await tx.table("projects").bulkAdd(added.map((p) => ({ ...p, key: projectKey(p.domain, p.id) })));
   }
 });

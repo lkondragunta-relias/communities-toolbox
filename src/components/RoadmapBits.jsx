@@ -45,6 +45,7 @@ export function DoneToggle({ item, domain, onToggle, size = "md", withLabel = fa
         onToggle({ domain, item });
       }}
       onMouseDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
     >
       <span className="done-toggle__mark" aria-hidden="true">
         {done ? "✓" : ""}
