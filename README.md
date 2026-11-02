@@ -172,6 +172,20 @@ under **Data issues**, not silently counted as valid staffing.
 
 ### Organization editing
 
+Click a domain name to open its dedicated homepage. It uses only existing
+organization worksheet data: all engineering leaders, PMs, UX contacts,
+engineering members, teams, organizations, notes, open positions, and assignment
+dates. No new Sheet columns or backend deployment are required. No primary owner,
+backup, review confirmation, or contact link is inferred.
+Directory search/role/partner filters do not hide rows on the domain homepage.
+The selected date scope still applies; **Copy domain link** includes that scope
+in the shareable `#/prod-eng-org/<domain>/<date-or-all>` URL. **Back to domains**
+returns to the directory without clearing its filters. Browser back/forward and
+reload support domain links. Unlocked **Edit assignment** actions open the existing
+dialog and return to the same domain after saving or removal. **Add assignment**
+prefills that domain. Team allocations and explicit UX None can also be edited
+directly on the domain homepage.
+
 The page uses the existing admin controls for adding, editing, and removing
 assignments. **Add assignment** can reuse an existing person or add a new one.
 When editing is unlocked, click a person's pill in a domain or team view to

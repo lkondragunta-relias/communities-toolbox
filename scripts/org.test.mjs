@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import vm from "node:vm";
 import { DEFAULT_ORGANIZATIONS, DEFAULT_ORG_ROLES, ORG_FIELDS, ORG_HEADERS, assignmentActiveOn, assignmentKey, organizationColor, validOrgDate, validateOrgAssignment } from "../src/config/orgConfig.js";
-import { buildOrganization, filterOrgRows, orgTeamAndPartnerBadges } from "../src/utils/orgUtils.js";
+import { buildOrganization, filterOrgRows, organizationDomainDetails, orgTeamAndPartnerBadges } from "../src/utils/orgUtils.js";
+import { buildHash, parseHash } from "../src/hooks/useRoute.js";
 import { orgCommandDate, parseOrgCommand, prepareOrgCommand, validateOrgCommandPreview } from "../src/utils/orgCommands.js";
 import { chooseOrgConversation, matchOrgText, orgConversationTurn } from "../src/utils/orgConversation.js";
 
@@ -20,6 +21,46 @@ const commandModel = (entries = [assignment()], overrides = {}) => buildOrganiza
   domains, teams, org: { ...org, assignments: entries, ...overrides },
 });
 const commandPreview = (input, model = commandModel(), id) => prepareOrgCommand(parseOrgCommand(input), model, id);
+
+test("domain homepages reuse scoped assignments without inventing ownership or hiding contacts", () => {
+  const entries = [
+    assignment({ role: "Eng leader", team: "" }),
+    assignment({ id: "lead2", personId: "p2", personName: "Second Lead", role: "Eng leader", team: "" }),
+    assignment({ id: "pm", personId: "p3", personName: "Product Person", role: "PM", team: "" }),
+    assignment({ id: "dev", personId: "p4", personName: "Developer", notes: "Existing notes", endDate: "2026-11-05" }),
+    assignment({ id: "allocation", personId: "", personName: "", role: "Team & Partners", organization: "BrillMark" }),
+    assignment({ id: "none", personId: "", personName: "", role: "UX", team: "", organization: "", status: "Not applicable" }),
+    assignment({ id: "open", personId: "", personName: "", role: "QA", team: "", status: "Open" }),
+    assignment({ id: "elsewhere", domain: "freecme", personId: "p5", personName: "Elsewhere" }),
+    assignment({ id: "invalid", personName: "", personId: "" }),
+  ];
+  const data = { domains, teams, org: { ...org, assignments: entries } };
+  const details = organizationDomainDetails(buildOrganization(data, "2026-11-01"), "wound-care");
+  assert.equal(details.peopleCount, 4);
+  assert.equal(details.contacts[0].assignments.length, 2);
+  assert.equal(details.contacts[1].assignments[0].team, "");
+  assert.equal(details.contacts[2].notApplicable.length, 1);
+  assert.equal(details.members[0].notes, "Existing notes");
+  assert.deepEqual(details.teams, ["Core"]);
+  assert.deepEqual(details.organizations, ["Relias", "BrillMark"]);
+  assert.equal(details.allocations.length, 1);
+  assert.equal(details.open.length, 1);
+  assert.equal(details.issues.length, 1);
+  assert.equal(organizationDomainDetails(buildOrganization(data, "2026-11-06"), "wound-care").members.length, 0);
+  assert.equal(organizationDomainDetails(buildOrganization(data), "wound-care").members.length, 1);
+  assert.equal(organizationDomainDetails(buildOrganization(data), "missing"), null);
+  const empty = organizationDomainDetails(commandModel([]), "freecme");
+  assert.equal(empty.peopleCount, 0);
+  assert(empty.contacts.every((contact) => !contact.assignments.length && !contact.notApplicable.length));
+});
+
+test("domain URLs preserve encoded domain IDs and date scope through reload parsing", () => {
+  for (const scope of ["2026-11-01", "all"]) {
+    const hash = buildHash("org", ["domain / & name", scope]);
+    assert.deepEqual(parseHash(hash), { view: "org", params: ["domain / & name", scope] });
+  }
+  assert.equal(buildHash("org"), "#/prod-eng-org");
+});
 
 test("person teams are optional across chat, model, and backend while allocations require them", () => {
   const { api } = backend();
