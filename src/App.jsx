@@ -10,6 +10,8 @@ import Sidebar from "./components/Sidebar";
 import LoadingScreen from "./components/LoadingScreen";
 import Filters from "./components/Filters";
 import RoadmapGrid from "./components/RoadmapGrid";
+import RoadmapBoard from "./components/RoadmapBoard";
+import { RoadmapLegend } from "./components/RoadmapBits";
 import ProjectsTable from "./components/ProjectsTable";
 import OverviewView from "./components/views/OverviewView";
 import IncidentsView from "./components/views/IncidentsView";
@@ -22,6 +24,7 @@ import { useRoadmapData } from "./hooks/useRoadmapData";
 import { ROUTES, useRoute } from "./hooks/useRoute";
 import { useTheme } from "./hooks/useTheme";
 import { resolveStatus } from "./config/statusConfig";
+import { resolveConfidence } from "./config/confidenceConfig";
 import {
   addInitiative,
   updateInitiative,
@@ -34,10 +37,19 @@ import {
   updateInitiativeStatus,
 } from "./services/sheetsApi";
 import {
+  addQuarters,
+  buildFocusQuartersRaw,
   getQuarterRangeLabel,
   getDomainKeys,
   getDomainNameMap,
   INITIAL_FILTER_STATE,
+  isDoneStatus,
+  quarterEndISO,
+  quarterOf,
+  quarterStartISO,
+  setQuartersFromData,
+  shiftTimelineByQuarters,
+  toggleDomainSelection,
 } from "./utils/roadmapUtils";
 
 const VIEW_TITLES = Object.fromEntries(ROUTES.map((r) => [r.id, r.title]));
@@ -46,6 +58,52 @@ const VIEW_TITLES = Object.fromEntries(ROUTES.map((r) => [r.id, r.title]));
 const SELF_MANAGED_VIEWS = new Set(["incidents", "sites", "org", "settings"]);
 
 const SIDEBAR_STORAGE_KEY = "roadmap_sidebar_collapsed";
+const ROADMAP_MODE_KEY = "roadmap_layout";
+
+/**
+ * Roadmap view options that live in the query string (not the hash) so a
+ * shared link like `?present=1&domain=platform,mobile&layout=board#/roadmap` opens
+ * straight into a clean, presentable view.
+ */
+function readRoadmapUrlOptions() {
+  try {
+    const q = new URLSearchParams(window.location.search);
+    return {
+      layout: q.get("layout"),
+      present: q.get("present") === "1",
+      domains: q.get("domain"),
+    };
+  } catch {
+    return { layout: null, present: false, domains: null };
+  }
+}
+
+function getInitialLayout() {
+  const fromUrl = readRoadmapUrlOptions().layout;
+  if (fromUrl === "board" || fromUrl === "timeline") return fromUrl;
+  try {
+    return localStorage.getItem(ROADMAP_MODE_KEY) === "board" ? "board" : "timeline";
+  } catch {
+    return "timeline";
+  }
+}
+
+function writeRoadmapUrlOptions({ layout, present, domains }) {
+  try {
+    const url = new URL(window.location.href);
+    const q = url.searchParams;
+    if (present) q.set("present", "1");
+    else q.delete("present");
+    if (present && domains && domains.size > 0) q.set("domain", [...domains].join(","));
+    else q.delete("domain");
+    if (present) q.set("layout", layout);
+    else q.delete("layout");
+    window.history.replaceState(null, "", url.toString());
+    return url.toString();
+  } catch {
+    return window.location.href;
+  }
+}
 
 /** Turn an Add/Edit form payload into a roadmap item (for optimistic insert). */
 function formPayloadToItem(payload) {
@@ -57,6 +115,7 @@ function formPayloadToItem(payload) {
     status: payload.status || "",
     owner: payload.owner || "",
     priority: payload.priority || "",
+    confidence: payload.confidence || "",
     link: payload.link || "",
     teams: String(payload.teams || "")
       .split(/[,;]/)
@@ -87,8 +146,17 @@ export default function App() {
   // Detail panes are addressable, so the drawer state lives in the URL:
   //   #/roadmap/platform/PLAT-1   #/operations/INC-0002
   const selectedProject = ["timeline", "table"].includes(view) && params.length >= 2 ? { domain: params[0], id: params[1] } : null;
+  const drawerOpen = selectedProject !== null;
   const selectedIncidentId = view === "incidents" ? params[0] || null : null;
-  const [filterState, setFilterState] = useState(INITIAL_FILTER_STATE);
+  const [filterState, setFilterState] = useState(() => {
+    const { domains } = readRoadmapUrlOptions();
+    const ids = String(domains || "").split(",").map((d) => d.trim()).filter((d) => d && d !== "all");
+    return ids.length ? { ...INITIAL_FILTER_STATE, domains: new Set(ids) } : INITIAL_FILTER_STATE;
+  });
+  const [roadmapLayout, setRoadmapLayout] = useState(getInitialLayout);
+  const [showAllQuarters, setShowAllQuarters] = useState(false);
+  const [presenting, setPresenting] = useState(() => readRoadmapUrlOptions().present);
+  const [linkCopied, setLinkCopied] = useState(false);
   const [tooltip, setTooltip] = useState({ item: null, target: null, domain: null });
   const hideTooltipTimerRef = useRef(null);
   const [adminOpen, setAdminOpen] = useState(false);
@@ -117,7 +185,7 @@ export default function App() {
   }, []);
 
   const handleDomainChange = useCallback((domainId) => {
-    setFilterState((prev) => ({ ...prev, domain: domainId }));
+    setFilterState((prev) => ({ ...prev, domains: toggleDomainSelection(prev.domains, domainId) }));
   }, []);
 
   const handleInitiativeChange = useCallback((initiativeId) => {
@@ -137,6 +205,10 @@ export default function App() {
 
   const handlePrioritiesChange = useCallback((priorities) => {
     setFilterState((prev) => ({ ...prev, priorities }));
+  }, []);
+
+  const handleConfidencesChange = useCallback((confidences) => {
+    setFilterState((prev) => ({ ...prev, confidences }));
   }, []);
 
   const handleClearFilters = useCallback(() => {
@@ -290,6 +362,7 @@ export default function App() {
         status: item.status || "",
         owner: item.owner || "",
         priority: item.priority || "",
+        confidence: resolveConfidence(item.confidence),
         link: item.link || "",
         teams: Array.isArray(item.teams) ? [...item.teams] : [],
       },
@@ -364,25 +437,127 @@ export default function App() {
     [adminToken, data, patchInitiative]
   );
 
+  const handleToggleDone = useCallback(
+    ({ domain, item }) => {
+      if (!item) return;
+      const statuses = data?.statuses || [];
+      const doneLabel = statuses.find((s) => isDoneStatus(s.label))?.label || "Done";
+      const activeLabel =
+        statuses.find((s) => /in progress/i.test(s.label))?.label || "In Progress";
+      const status = isDoneStatus(item.status) ? activeLabel : doneLabel;
+      handleStatusChange({ domain, id: item.id, status }).catch((err) => {
+        window.alert(err.message || "Could not update. Reverted.");
+      });
+    },
+    [data, handleStatusChange]
+  );
+
+  // Board drag: shift the whole initiative by whole quarters and save.
+  const handleMoveInitiative = useCallback(
+    ({ domain, item, quarters: delta }) => {
+      const [timelineStart, timelineEnd] = shiftTimelineByQuarters(item.timeline, delta);
+      handleOptimisticUpdate({
+        adminToken,
+        team: domain,
+        id: item.id,
+        name: item.name || "",
+        description: item.description || "",
+        timelineStart,
+        timelineEnd,
+        status: item.status || "",
+        owner: item.owner || "",
+        priority: item.priority || "",
+        confidence: item.confidence || "",
+        link: item.link || "",
+        teams: (Array.isArray(item.teams) ? item.teams : []).join(","),
+      });
+    },
+    [adminToken, handleOptimisticUpdate]
+  );
+
+  const handleAddInCell = useCallback(({ domain, quarterOffset }) => {
+    const q = addQuarters(quarterOf(new Date()), quarterOffset);
+    setAddPrefill({ domain, timelineStart: quarterStartISO(q), timelineEnd: quarterEndISO(q) });
+    setAdminOpen(true);
+  }, []);
+
+  const changeLayout = useCallback((layout) => {
+    setRoadmapLayout(layout);
+    try {
+      localStorage.setItem(ROADMAP_MODE_KEY, layout);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    writeRoadmapUrlOptions({ layout: roadmapLayout, present: presenting, domains: filterState.domains });
+  }, [roadmapLayout, presenting, filterState.domains]);
+
+  // Esc leaves present mode (unless a drawer is open — Esc closes that first).
+  useEffect(() => {
+    if (!presenting) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape" && !drawerOpen) setPresenting(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [presenting, drawerOpen]);
+
+  const handleCopyLink = useCallback(async () => {
+    const url = writeRoadmapUrlOptions({
+      layout: roadmapLayout,
+      present: true,
+      domains: filterState.domains,
+    });
+    try {
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 1800);
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  }, [roadmapLayout, filterState.domains]);
+
+  const displayQuarters = useMemo(() => {
+    if (showAllQuarters || !quarters.length) return quarters;
+    try {
+      return setQuartersFromData({ quarters: buildFocusQuartersRaw() });
+    } catch {
+      return quarters;
+    }
+  }, [quarters, showAllQuarters]);
+
   if (loaderVisible) {
     return <LoadingScreen pending={loading} onFinish={() => setLoaderVisible(false)} />;
   }
 
   const pageTitle = VIEW_TITLES[view] || "Roadmap";
-  const subtitle =
-    view === "timeline" && quarters.length ? getQuarterRangeLabel(quarters) : "";
-  const showFilters = view === "timeline" || view === "table";
-  const showTopbarAdd = showAdmin && !SELF_MANAGED_VIEWS.has(view);
+  const isRoadmap = view === "timeline";
+  const presentMode = presenting && isRoadmap;
+  const canEditRoadmap = canEditStatus && !presentMode;
+  const subtitle = isRoadmap
+    ? roadmapLayout === "board"
+      ? `Now, next and later · as of ${new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`
+      : displayQuarters.length
+        ? getQuarterRangeLabel(displayQuarters)
+        : ""
+    : "";
+  const showFilters = (isRoadmap && !presentMode) || view === "table";
+  const showTopbarAdd = showAdmin && !SELF_MANAGED_VIEWS.has(view) && !presentMode;
+  const domainNameMap = data ? getDomainNameMap(data) : {};
 
   return (
-    <div className="app">
+    <div className={`app${presentMode ? " app--present" : ""}`}>
 
-      <Sidebar
-        view={view}
-        onNavigate={navigate}
-        collapsed={sidebarCollapsed}
-        onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-      />
+      {presentMode ? null : (
+        <Sidebar
+          view={view}
+          onNavigate={navigate}
+          collapsed={sidebarCollapsed}
+          onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+        />
+      )}
 
       <main className="app__main">
         <header className="app__topbar">
@@ -399,11 +574,60 @@ export default function App() {
               {subtitle ? <p className="app__page-subtitle">{subtitle}</p> : null}
             </div>
           </div>
-          {showTopbarAdd ? (
-            <button type="button" className="app__add-btn" onClick={openAddModal}>
-              + Add project
-            </button>
-          ) : null}
+          <div className="app__topbar-actions">
+            {isRoadmap ? (
+              <div className="layout-switch" role="group" aria-label="Roadmap layout">
+                <button
+                  type="button"
+                  className={`layout-switch__btn${roadmapLayout === "timeline" ? " is-active" : ""}`}
+                  aria-pressed={roadmapLayout === "timeline"}
+                  onClick={() => changeLayout("timeline")}
+                >
+                  Timeline
+                </button>
+                <button
+                  type="button"
+                  className={`layout-switch__btn${roadmapLayout === "board" ? " is-active" : ""}`}
+                  aria-pressed={roadmapLayout === "board"}
+                  onClick={() => changeLayout("board")}
+                >
+                  Board
+                </button>
+              </div>
+            ) : null}
+            {isRoadmap && !presentMode ? (
+              <button
+                type="button"
+                className="app__ghost-btn"
+                onClick={() => setPresenting(true)}
+                title="Clean, full-screen view to share with your team"
+              >
+                ▶ Present
+              </button>
+            ) : null}
+            {presentMode ? (
+              <>
+                <button type="button" className="app__ghost-btn" onClick={handleCopyLink}>
+                  {linkCopied ? "Link copied ✓" : "Copy link"}
+                </button>
+                <button type="button" className="app__ghost-btn" onClick={() => window.print()}>
+                  Print / PDF
+                </button>
+                <button
+                  type="button"
+                  className="app__ghost-btn app__ghost-btn--strong"
+                  onClick={() => setPresenting(false)}
+                >
+                  Exit (Esc)
+                </button>
+              </>
+            ) : null}
+            {showTopbarAdd ? (
+              <button type="button" className="app__add-btn" onClick={openAddModal}>
+                + Add project
+              </button>
+            ) : null}
+          </div>
         </header>
 
         <div className="app__content theme-scroll">
@@ -466,21 +690,72 @@ export default function App() {
                     onTeamsChange={handleTeamsChange}
                     onStatusesChange={handleStatusesChange}
                     onPrioritiesChange={handlePrioritiesChange}
+                    onConfidencesChange={handleConfidencesChange}
                     onClear={handleClearFilters}
                   />
                 ) : null}
 
-                {view === "timeline" ? (
+                {isRoadmap && presentMode ? (
+                  <div className="present-domains" role="group" aria-label="Domain">
+                    {[["all", "All domains"], ...getDomainKeys(data).map((d) => [d, domainNameMap[d] || d])].map(
+                      ([id, label]) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={`present-domains__btn${
+                            (id === "all" ? !filterState.domains : filterState.domains?.has(id))
+                              ? " is-active"
+                              : ""
+                          }`}
+                          aria-pressed={Boolean(
+                            id === "all" ? !filterState.domains : filterState.domains?.has(id)
+                          )}
+                          onClick={() => handleDomainChange(id)}
+                        >
+                          {label}
+                        </button>
+                      )
+                    )}
+                  </div>
+                ) : null}
+
+                {isRoadmap ? (
+                  <div className="roadmap__toolbar">
+                    <RoadmapLegend />
+                    {roadmapLayout === "timeline" && !presentMode ? (
+                      <button
+                        type="button"
+                        className="roadmap__range-btn"
+                        onClick={() => setShowAllQuarters((v) => !v)}
+                      >
+                        {showAllQuarters ? "Focus on the next few quarters" : "Show all quarters"}
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {isRoadmap && roadmapLayout === "board" ? (
+                  <RoadmapBoard
+                    data={data}
+                    filterState={filterState}
+                    canEdit={canEditRoadmap}
+                    onSelect={handleSelectProject}
+                    onToggleDone={canEditRoadmap ? handleToggleDone : undefined}
+                    onAddInCell={canEditRoadmap ? handleAddInCell : undefined}
+                    onMove={canEditRoadmap ? handleMoveInitiative : undefined}
+                  />
+                ) : isRoadmap ? (
                   <div className="roadmap__scroll">
                     <RoadmapGrid
                       data={data}
-                      quarters={quarters}
+                      quarters={displayQuarters}
                       filterState={filterState}
                       onShowTooltip={handleShowTooltip}
                       onHideTooltip={handleHideTooltip}
                       onSelect={handleSelectProject}
-                      canCreate={canEditStatus}
-                      onCreateRange={canEditStatus ? handleCreateRange : undefined}
+                      canCreate={canEditRoadmap}
+                      onCreateRange={canEditRoadmap ? handleCreateRange : undefined}
+                      onToggleDone={canEditRoadmap ? handleToggleDone : undefined}
                     />
                   </div>
                 ) : (
@@ -504,11 +779,12 @@ export default function App() {
         <ProjectDetail
           data={data}
           selected={selectedProject}
-          canEdit={canEditStatus}
-          canDelete={canDeleteInitiatives}
+          canEdit={canEditRoadmap}
+          canDelete={canDeleteInitiatives && !presentMode}
           onEdit={handleEditInitiative}
           onDelete={handleDeleteFromTable}
           onClose={handleCloseProject}
+          onToggleDone={canEditRoadmap ? handleToggleDone : undefined}
         />
       ) : null}
 
@@ -518,14 +794,15 @@ export default function App() {
         domain={tooltip.domain}
         statuses={data?.statuses || []}
         priorities={data?.priorities || []}
-        canEditStatus={canEditStatus}
-        canEdit={canEditStatus}
-        canDelete={canDeleteInitiatives}
+        canEditStatus={canEditRoadmap}
+        canEdit={canEditRoadmap}
+        canDelete={canDeleteInitiatives && !presentMode}
         onStatusChange={canEditStatus ? handleStatusChange : undefined}
         onEdit={canEditStatus ? handleEditInitiative : undefined}
         onDelete={canDeleteInitiatives ? handleDeleteInitiative : undefined}
         onTooltipEnter={handleTooltipEnter}
         onTooltipLeave={handleHideTooltip}
+        onToggleDone={canEditRoadmap ? handleToggleDone : undefined}
       />
 
       {adminOpen && data ? (

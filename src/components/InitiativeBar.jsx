@@ -1,12 +1,25 @@
 import {
   formatTimelineRange,
   initiativeMatchesFilter,
-  isFilterActive,
+  isAtRiskStatus,
+  isDoneStatus,
+  isItemFilterActive,
   timelinePositionToCss,
 } from "../utils/roadmapUtils";
+import { confidenceClass } from "../config/confidenceConfig";
+import { DoneToggle } from "./RoadmapBits";
 
-export default function InitiativeBar({ item, category, filterState, onShowTooltip, onHideTooltip, onSelect }) {
-  const filterActive = isFilterActive(filterState);
+export default function InitiativeBar({
+  item,
+  category,
+  filterState,
+  onShowTooltip,
+  onHideTooltip,
+  onSelect,
+  onToggleDone,
+}) {
+  // Domain selection hides whole rows, so only item-level filters highlight bars.
+  const filterActive = isItemFilterActive(filterState);
   const matched = filterActive && initiativeMatchesFilter(item, category, filterState);
   const dimmed = filterActive && !matched;
 
@@ -14,6 +27,11 @@ export default function InitiativeBar({ item, category, filterState, onShowToolt
     "initiative",
     matched && "initiative--matched",
     dimmed && "initiative--dimmed",
+    `initiative--${confidenceClass(item.confidence)}`,
+    isDoneStatus(item.status) && "initiative--done",
+    isAtRiskStatus(item.status) && "initiative--risk",
+    item.clippedStart && "initiative--clip-start",
+    item.clippedEnd && "initiative--clip-end",
   ]
     .filter(Boolean)
     .join(" ");
@@ -57,7 +75,8 @@ export default function InitiativeBar({ item, category, filterState, onShowToolt
           : undefined
       }
     >
-      {item.name}
+      <DoneToggle item={item} domain={category} onToggle={onToggleDone} size="sm" />
+      <span className="initiative__name">{item.name}</span>
     </div>
   );
 }

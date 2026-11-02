@@ -1,6 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { formatDomainLabel } from "../utils/roadmapUtils";
+import {
+  addQuarters,
+  formatDomainLabel,
+  isQuarterAligned,
+  quarterEndISO,
+  quarterIndex,
+  quarterLabel,
+  quarterOf,
+  quarterStartISO,
+} from "../utils/roadmapUtils";
 import { validateInitiativeForm } from "../services/sheetsApi";
+import { CONFIDENCE_LEVELS, DEFAULT_CONFIDENCE } from "../config/confidenceConfig";
+
+/** Quarter choices: a year back through two years ahead, plus any already-set quarter. */
+function buildQuarterOptions(timelineStart, timelineEnd) {
+  const now = quarterOf(new Date());
+  const keys = new Map();
+  for (let i = -4; i <= 8; i++) {
+    const q = addQuarters(now, i);
+    keys.set(quarterIndex(q), q);
+  }
+  [timelineStart, timelineEnd].forEach((iso) => {
+    const q = iso ? quarterOf(iso) : null;
+    if (q) keys.set(quarterIndex(q), q);
+  });
+  return [...keys.entries()].sort((a, b) => a[0] - b[0]).map(([, q]) => q);
+}
 
 const EMPTY_FORM = {
   domain: "",
@@ -12,6 +37,7 @@ const EMPTY_FORM = {
   status: "",
   owner: "",
   priority: "",
+  confidence: DEFAULT_CONFIDENCE,
   link: "",
   teams: [],
 };
@@ -45,6 +71,10 @@ export default function AdminModal({
   const [tokenInput, setTokenInput] = useState("");
   const unlocked = Boolean(adminToken);
   const [form, setForm] = useState(() => buildInitialForm(domains, initialValues));
+  // Pick whole quarters by default; fall back to exact dates for odd ranges.
+  const [exactDates, setExactDates] = useState(
+    () => !isQuarterAligned([form.timelineStart, form.timelineEnd])
+  );
   const [fieldErrors, setFieldErrors] = useState({});
   const panelRef = useRef(null);
 
@@ -73,6 +103,23 @@ export default function AdminModal({
       const next = { ...prev };
       delete next[name];
       delete next.teams;
+      return next;
+    });
+  }, []);
+
+  const setQuarterRange = useCallback((fromKey, toKey) => {
+    const from = fromKey == null ? null : { year: Math.floor(fromKey / 4), q: (fromKey % 4) + 1 };
+    let to = toKey == null ? null : { year: Math.floor(toKey / 4), q: (toKey % 4) + 1 };
+    if (from && to && quarterIndex(to) < quarterIndex(from)) to = from;
+    setForm((prev) => ({
+      ...prev,
+      timelineStart: from ? quarterStartISO(from) : prev.timelineStart,
+      timelineEnd: to ? quarterEndISO(to) : prev.timelineEnd,
+    }));
+    setFieldErrors((prev) => {
+      const next = { ...prev };
+      delete next.timelineStart;
+      delete next.timelineEnd;
       return next;
     });
   }, []);
@@ -125,6 +172,7 @@ export default function AdminModal({
         status: form.status || "",
         owner: form.owner.trim(),
         priority: form.priority || "",
+        confidence: form.confidence || "",
         link: form.link.trim(),
         teams: form.teams.join(","),
       };
@@ -145,6 +193,10 @@ export default function AdminModal({
       validPriorityLabels,
     ]
   );
+
+  const fromQ = form.timelineStart ? quarterOf(form.timelineStart) : null;
+  const toQ = form.timelineEnd ? quarterOf(form.timelineEnd) : null;
+  const quarterOptions = buildQuarterOptions(form.timelineStart, form.timelineEnd);
 
   const footer = (content) => (
     <footer className="admin-modal__footer">{content}</footer>
@@ -297,39 +349,131 @@ export default function AdminModal({
               ) : null}
             </label>
 
-            <div className="admin-field-row">
-              <label className="admin-field">
-                <span className="admin-field__label">
-                  Timeline start <span className="admin-field__req">*</span>
-                </span>
-                <input
-                  type="date"
-                  className="admin-field__input"
-                  value={form.timelineStart}
-                  onChange={(e) => updateField("timelineStart", e.target.value)}
-                  required
-                />
-                {fieldErrors.timelineStart ? (
-                  <span className="admin-field__error">{fieldErrors.timelineStart}</span>
-                ) : null}
-              </label>
+            {exactDates ? (
+              <div className="admin-field-row">
+                <label className="admin-field">
+                  <span className="admin-field__label">
+                    Timeline start <span className="admin-field__req">*</span>
+                  </span>
+                  <input
+                    type="date"
+                    className="admin-field__input"
+                    value={form.timelineStart}
+                    onChange={(e) => updateField("timelineStart", e.target.value)}
+                    required
+                  />
+                  {fieldErrors.timelineStart ? (
+                    <span className="admin-field__error">{fieldErrors.timelineStart}</span>
+                  ) : null}
+                </label>
 
-              <label className="admin-field">
-                <span className="admin-field__label">
-                  Timeline end <span className="admin-field__req">*</span>
-                </span>
-                <input
-                  type="date"
-                  className="admin-field__input"
-                  value={form.timelineEnd}
-                  onChange={(e) => updateField("timelineEnd", e.target.value)}
-                  required
-                />
-                {fieldErrors.timelineEnd ? (
-                  <span className="admin-field__error">{fieldErrors.timelineEnd}</span>
-                ) : null}
-              </label>
-            </div>
+                <label className="admin-field">
+                  <span className="admin-field__label">
+                    Timeline end <span className="admin-field__req">*</span>
+                  </span>
+                  <input
+                    type="date"
+                    className="admin-field__input"
+                    value={form.timelineEnd}
+                    onChange={(e) => updateField("timelineEnd", e.target.value)}
+                    required
+                  />
+                  {fieldErrors.timelineEnd ? (
+                    <span className="admin-field__error">{fieldErrors.timelineEnd}</span>
+                  ) : null}
+                </label>
+              </div>
+            ) : (
+              <div className="admin-field-row">
+                <label className="admin-field">
+                  <span className="admin-field__label">
+                    From quarter <span className="admin-field__req">*</span>
+                  </span>
+                  <select
+                    className="admin-field__input"
+                    value={fromQ ? quarterIndex(fromQ) : ""}
+                    onChange={(e) => setQuarterRange(Number(e.target.value), toQ ? quarterIndex(toQ) : Number(e.target.value))}
+                    required
+                  >
+                    {!fromQ ? <option value="">Choose…</option> : null}
+                    {quarterOptions.map((q) => (
+                      <option key={quarterIndex(q)} value={quarterIndex(q)}>
+                        {quarterLabel(q)}
+                      </option>
+                    ))}
+                  </select>
+                  {fieldErrors.timelineStart ? (
+                    <span className="admin-field__error">{fieldErrors.timelineStart}</span>
+                  ) : null}
+                </label>
+                <label className="admin-field">
+                  <span className="admin-field__label">
+                    To quarter <span className="admin-field__req">*</span>
+                  </span>
+                  <select
+                    className="admin-field__input"
+                    value={toQ ? quarterIndex(toQ) : ""}
+                    onChange={(e) => setQuarterRange(fromQ ? quarterIndex(fromQ) : Number(e.target.value), Number(e.target.value))}
+                    required
+                  >
+                    {!toQ ? <option value="">Choose…</option> : null}
+                    {quarterOptions
+                      .filter((q) => !fromQ || quarterIndex(q) >= quarterIndex(fromQ))
+                      .map((q) => (
+                        <option key={quarterIndex(q)} value={quarterIndex(q)}>
+                          {quarterLabel(q)}
+                        </option>
+                      ))}
+                  </select>
+                  {fieldErrors.timelineEnd ? (
+                    <span className="admin-field__error">{fieldErrors.timelineEnd}</span>
+                  ) : null}
+                </label>
+              </div>
+            )}
+            <button
+              type="button"
+              className="admin-link-btn"
+              onClick={() => {
+                if (exactDates) {
+                  // Snap to whole quarters when switching back.
+                  setQuarterRange(
+                    fromQ ? quarterIndex(fromQ) : null,
+                    toQ ? quarterIndex(toQ) : null
+                  );
+                }
+                setExactDates((v) => !v);
+              }}
+            >
+              {exactDates ? "Pick by quarter instead" : "Use exact dates instead"}
+            </button>
+
+            <fieldset className="admin-field admin-field--confidence">
+              <legend className="admin-field__label">How sure are we?</legend>
+              <div className="admin-confidence">
+                {CONFIDENCE_LEVELS.map((c) => (
+                  <label
+                    key={c.id}
+                    className={`admin-confidence__opt admin-confidence__opt--${c.id.toLowerCase()}${
+                      form.confidence === c.label ? " is-active" : ""
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="confidence"
+                      value={c.label}
+                      checked={form.confidence === c.label}
+                      onChange={() => updateField("confidence", c.label)}
+                    />
+                    <span className="admin-confidence__label">{c.label}</span>
+                    <span className="admin-confidence__hint">{c.hint}</span>
+                  </label>
+                ))}
+              </div>
+              {fieldErrors.confidence ? (
+                <span className="admin-field__error">{fieldErrors.confidence}</span>
+              ) : null}
+            </fieldset>
 
             <label className="admin-field">
               <span className="admin-field__label">Status (optional)</span>

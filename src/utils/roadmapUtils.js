@@ -1,4 +1,5 @@
 import { applyStatusToInitiative, DEFAULT_STATUSES } from "../config/statusConfig";
+import { resolveConfidence } from "../config/confidenceConfig";
 
 export const RESERVED_DATA_KEYS = new Set([
   "meta",
@@ -111,6 +112,19 @@ export function initiativeMatchesPriorityFilter(item, selectedPriorities) {
   return [...selectedPriorities].some(
     (label) => label.toLowerCase() === priority.toLowerCase()
   );
+}
+
+export function initiativeMatchesConfidenceFilter(item, selectedConfidences) {
+  if (!selectedConfidences || selectedConfidences.size === 0) return true;
+  return selectedConfidences.has(resolveConfidence(item?.confidence));
+}
+
+export function isDoneStatus(status) {
+  return /done|complete/i.test(String(status || "")) && !/close to done/i.test(String(status || ""));
+}
+
+export function isAtRiskStatus(status) {
+  return /risk/i.test(String(status || ""));
 }
 
 export function parseDate(value) {
@@ -362,17 +376,60 @@ export function getAllInitiatives(data) {
   );
 }
 
+/** True when an initiative's dates overlap the visible quarter range at all. */
+export function initiativeInRange(item, quarters) {
+  if (!quarters.length) return true;
+  const start = parseDate(item?.timeline?.[0]);
+  const end = parseQuarterEnd(item?.timeline?.[1]);
+  if (!start || !end) return true;
+  return end >= quarters[0].start && start <= quarters[quarters.length - 1].end;
+}
+
 export function getRoadmapRows(data, quarters) {
   const statusDefs = getStatusDefinitions(data);
   const domainNames = getDomainNameMap(data);
-  return getDomainKeys(data).map((key) => ({
-    id: key,
-    label: domainNames[key] || formatDomainLabel(key),
-    initiatives: assignLanes(
-      (data[key] || []).map((item) => withDefaultColor(item, statusDefs)),
-      quarters
-    ),
-  }));
+  const first = quarters[0]?.start;
+  const last = quarters[quarters.length - 1]?.end;
+  return getDomainKeys(data).map((key) => {
+    const all = data[key] || [];
+    const visible = all.filter((item) => initiativeInRange(item, quarters));
+    return {
+      id: key,
+      label: domainNames[key] || formatDomainLabel(key),
+      hiddenCount: all.length - visible.length,
+      initiatives: assignLanes(
+        visible.map((item) => {
+          const start = parseDate(item?.timeline?.[0]);
+          const end = parseQuarterEnd(item?.timeline?.[1]);
+          return {
+            ...withDefaultColor(item, statusDefs),
+            clippedStart: Boolean(first && start && start < first),
+            clippedEnd: Boolean(last && end && end > last),
+          };
+        }),
+        quarters
+      ),
+    };
+  });
+}
+
+/** Counts for a domain's at-a-glance summary. */
+export function summarizeDomain(items, today = new Date()) {
+  let inFlight = 0;
+  let done = 0;
+  let atRisk = 0;
+  let upcoming = 0;
+  (items || []).forEach((item) => {
+    const h = horizonOf(item, today);
+    if (isDoneStatus(item.status)) {
+      if (h === "now" || h === "past") done++;
+      return;
+    }
+    if (isAtRiskStatus(item.status)) atRisk++;
+    if (h === "now") inFlight++;
+    else if (h === "next" || h === "later") upcoming++;
+  });
+  return { inFlight, done, atRisk, upcoming };
 }
 
 export function patchInitiativeInData(data, domain, initiativeId, updates) {
@@ -390,7 +447,7 @@ export function patchInitiativeInData(data, domain, initiativeId, updates) {
 }
 
 export function initiativeMatchesFilter(item, category, filterState) {
-  if (filterState.domain !== "all" && category !== filterState.domain) return false;
+  if (!rowMatchesDomainFilter(category, filterState)) return false;
   if (
     filterState.initiatives &&
     filterState.initiatives.size > 0 &&
@@ -401,24 +458,41 @@ export function initiativeMatchesFilter(item, category, filterState) {
   if (!initiativeMatchesTeamsFilter(item, filterState.teams)) return false;
   if (!initiativeMatchesStatusFilter(item, filterState.statuses)) return false;
   if (!initiativeMatchesPriorityFilter(item, filterState.priorities)) return false;
+  if (!initiativeMatchesConfidenceFilter(item, filterState.confidences)) return false;
   return true;
 }
 
 export function rowMatchesDomainFilter(category, filterState) {
-  if (filterState.domain === "all") return true;
-  return filterState.domain === category;
+  const selected = filterState?.domains;
+  return !selected || selected.size === 0 || selected.has(category);
+}
+
+/** Toggle one domain in a multi-select; "all" (or emptying it) clears the selection. */
+export function toggleDomainSelection(selected, domainId) {
+  if (!domainId || domainId === "all") return null;
+  const next = new Set(selected || []);
+  if (next.has(domainId)) next.delete(domainId);
+  else next.add(domainId);
+  return next.size > 0 ? next : null;
+}
+
+/** Filters that pick out individual initiatives (everything except the domain selection). */
+export function isItemFilterActive(filterState) {
+  return Boolean(
+    (filterState.initiatives && filterState.initiatives.size > 0) ||
+      (filterState.teams && filterState.teams.size > 0) ||
+      (filterState.statuses && filterState.statuses.size > 0) ||
+      (filterState.priorities && filterState.priorities.size > 0) ||
+      (filterState.confidences && filterState.confidences.size > 0)
+  );
 }
 
 /** @deprecated use rowMatchesDomainFilter */
 export const rowMatchesTeamFilter = rowMatchesDomainFilter;
 
 export function isFilterActive(filterState) {
-  return (
-    filterState.domain !== "all" ||
-    (filterState.initiatives && filterState.initiatives.size > 0) ||
-    (filterState.teams && filterState.teams.size > 0) ||
-    (filterState.statuses && filterState.statuses.size > 0) ||
-    (filterState.priorities && filterState.priorities.size > 0)
+  return Boolean(
+    (filterState.domains && filterState.domains.size > 0) || isItemFilterActive(filterState)
   );
 }
 
@@ -430,8 +504,9 @@ export function getQuarterRangeLabel(quarters) {
 }
 
 export function getDomainScopeLabel(filterState) {
-  if (!filterState || filterState.domain === "all") return "all domains";
-  return formatDomainLabel(filterState.domain);
+  const selected = filterState?.domains;
+  if (!selected || selected.size === 0) return "all domains";
+  return [...selected].map(formatDomainLabel).join(", ");
 }
 
 /** e.g. "Q1 2026 — Q4 2030 · all domains" from loaded data + active filters */
@@ -443,9 +518,130 @@ export function getSubtitle(quarters, filterState) {
 }
 
 export const INITIAL_FILTER_STATE = {
-  domain: "all",
+  domains: null,
   initiatives: null,
   teams: null,
   statuses: null,
   priorities: null,
+  confidences: null,
 };
+
+/* ---------- Quarter math (calendar quarters, UTC) ---------- */
+
+/** { year, q } (q = 1..4) for a date, defaulting to today. */
+export function quarterOf(date = new Date()) {
+  const d = date instanceof Date ? date : parseDate(date);
+  if (!d) return null;
+  return { year: d.getUTCFullYear(), q: Math.floor(d.getUTCMonth() / 3) + 1 };
+}
+
+/** Shift a { year, q } by n quarters. */
+export function addQuarters({ year, q }, n) {
+  const idx = year * 4 + (q - 1) + n;
+  return { year: Math.floor(idx / 4), q: (idx % 4) + 1 };
+}
+
+export function quarterIndex({ year, q }) {
+  return year * 4 + (q - 1);
+}
+
+export function quarterStartISO({ year, q }) {
+  return `${year}-${String((q - 1) * 3 + 1).padStart(2, "0")}-01`;
+}
+
+export function quarterEndISO({ year, q }) {
+  const month = q * 3;
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${year}-${String(month).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`;
+}
+
+export function quarterLabel({ year, q }) {
+  return `Q${q} ${year}`;
+}
+
+/** "Q4 2026" → { year: 2026, q: 4 }. */
+export function parseQuarterLabel(label) {
+  const m = /^Q([1-4])\s+(\d{4})$/.exec(String(label || "").trim());
+  return m ? { year: Number(m[2]), q: Number(m[1]) } : null;
+}
+
+/** Quarter label range for an initiative, e.g. "Q4 2026 → Q1 2027" (or one label). */
+export function formatQuarterRange(timeline) {
+  if (!Array.isArray(timeline) || timeline.length < 2) return "";
+  const a = quarterOf(timeline[0]);
+  const b = quarterOf(timeline[1]);
+  if (!a || !b) return "";
+  if (quarterIndex(a) === quarterIndex(b)) return quarterLabel(a);
+  return `${quarterLabel(a)} → ${quarterLabel(b)}`;
+}
+
+/** True when the dates fall exactly on quarter boundaries. */
+export function isQuarterAligned(timeline) {
+  if (!Array.isArray(timeline) || timeline.length < 2) return true;
+  const a = quarterOf(timeline[0]);
+  const b = quarterOf(timeline[1]);
+  if (!a || !b) return true;
+  return timeline[0] === quarterStartISO(a) && timeline[1] === quarterEndISO(b);
+}
+
+/** Shift an initiative's dates by whole quarters, keeping day-of-quarter offsets. */
+export function shiftTimelineByQuarters(timeline, n) {
+  if (!n || !Array.isArray(timeline) || timeline.length < 2) return timeline;
+  return timeline.map((iso) => {
+    const d = parseDate(iso);
+    if (!d) return iso;
+    const qs = quarterOf(d);
+    const offsetDays = Math.round((d - parseDate(quarterStartISO(qs))) / 86400000);
+    const target = addQuarters(qs, n);
+    const base = parseDate(quarterStartISO(target));
+    const shifted = new Date(base.getTime() + offsetDays * 86400000);
+    const end = parseDate(quarterEndISO(target));
+    const clamped = shifted > end ? end : shifted;
+    return clamped.toISOString().slice(0, 10);
+  });
+}
+
+/**
+ * The default "useful" window: last quarter through four quarters ahead,
+ * as raw quarter rows (same shape as buildQuartersForYearRange).
+ */
+export function buildFocusQuartersRaw(today = new Date(), before = 1, after = 4) {
+  const now = quarterOf(today);
+  const raw = [];
+  for (let i = -before; i <= after; i++) {
+    const qq = addQuarters(now, i);
+    raw.push({ year: qq.year, label: `Q${qq.q}`, start: quarterStartISO(qq), end: quarterEndISO(qq) });
+  }
+  return raw;
+}
+
+/* ---------- Now / Next / Later ---------- */
+
+export const HORIZONS = [
+  { id: "now", label: "Now", hint: "This quarter" },
+  { id: "next", label: "Next", hint: "Next quarter" },
+  { id: "later", label: "Later", hint: "After that" },
+];
+
+/**
+ * Which column an initiative belongs in: "now" if it overlaps this quarter,
+ * "next" if it starts next quarter, "later" if beyond, "past" if it ended.
+ */
+export function horizonOf(item, today = new Date()) {
+  const tl = item?.timeline;
+  const now = quarterIndex(quarterOf(today));
+  const start = Array.isArray(tl) ? quarterOf(tl[0]) : null;
+  const end = Array.isArray(tl) ? quarterOf(tl[1]) : null;
+  if (!start || !end) return "later";
+  const s = quarterIndex(start);
+  const e = quarterIndex(end);
+  if (e < now) return "past";
+  if (s <= now) return "now";
+  if (s === now + 1) return "next";
+  return "later";
+}
+
+/** Quarter offset (relative to now) that a horizon column represents. */
+export function horizonQuarterOffset(horizonId) {
+  return horizonId === "now" ? 0 : horizonId === "next" ? 1 : 2;
+}

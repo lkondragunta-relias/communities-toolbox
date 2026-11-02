@@ -9,7 +9,8 @@
  * "Community Roadmap - Projects" or just "Projects" both work):
  *
  *   Projects   : Title(=id) | Domain | Name | Description | TimelineStart |
- *                TimelineEnd | Status | Priority | Owner | Teams | Link | Progress
+ *                TimelineEnd | Status | Priority | Owner | Teams | Link | Progress |
+ *                Confidence (Committed | Likely | Exploring — added on first write)
  *   Teams      : Title(=id) | Label | Color
  *   Domains    : Title(=id) | Name
  *   Statuses   : Title(=label) | Color | SortOrder
@@ -247,6 +248,7 @@ function projectColumns_(sheet) {
     end: colOf_(map, ['timelineend', 'timeline end', 'end']),
     status: colOf_(map, ['status']),
     priority: colOf_(map, ['priority']),
+    confidence: colOf_(map, ['confidence', 'commitment']),
     owner: colOf_(map, ['owner']),
     teams: colOf_(map, ['teams', 'team', 'cohort']),
     link: colOf_(map, ['link', 'links', 'url']),
@@ -276,6 +278,7 @@ function readProjects_() {
       timelineEnd: formatDateCell_(cell_(row, c.end)),
       status: String(cell_(row, c.status) || '').trim(),
       priority: String(cell_(row, c.priority) || '').trim(),
+      confidence: String(cell_(row, c.confidence) || '').trim(),
       owner: String(cell_(row, c.owner) || '').trim(),
       teams: String(cell_(row, c.teams) || '').trim(),
       link: String(cell_(row, c.link) || '').trim(),
@@ -399,12 +402,36 @@ function projectValues_(body) {
     end: String(body.timelineEnd || '').trim(),
     status: String(body.status || '').trim(),
     priority: String(body.priority || '').trim(),
+    confidence: normalizeConfidence_(body.confidence),
     owner: String(body.owner || '').trim(),
     teams: formatTeamsValue_(body.teams),
     link: String(body.link || '').trim(),
     progress: (body.progress === '' || body.progress === undefined || body.progress === null)
       ? '' : (Number(body.progress) || 0),
   };
+}
+
+var CONFIDENCE_LEVELS = ['Committed', 'Likely', 'Exploring'];
+
+function normalizeConfidence_(value) {
+  var raw = String(value || '').trim();
+  if (!raw) return '';
+  for (var i = 0; i < CONFIDENCE_LEVELS.length; i++) {
+    if (CONFIDENCE_LEVELS[i].toLowerCase() === raw.toLowerCase()) return CONFIDENCE_LEVELS[i];
+  }
+  throw new Error('Confidence must be one of: ' + CONFIDENCE_LEVELS.join(', ') + '.');
+}
+
+/** Sheets created before the Confidence field get the column appended on first write. */
+function ensureConfidenceColumn_(sheet, c) {
+  if (c.confidence) return c;
+  var col = sheet.getLastColumn() + 1;
+  ensureColumnCount_(sheet, col);
+  sheet.getRange(1, col).setValue('Confidence');
+  sheet.getRange(2, col, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(CONFIDENCE_LEVELS, true).setAllowInvalid(false).build()
+  );
+  return projectColumns_(sheet);
 }
 
 function formatTeamsValue_(teams) {
@@ -421,6 +448,7 @@ function writeProjectRow_(row, c, v) {
   setCol_(row, c.end, v.end);
   setCol_(row, c.status, v.status);
   setCol_(row, c.priority, v.priority);
+  setCol_(row, c.confidence, v.confidence);
   setCol_(row, c.owner, v.owner);
   setCol_(row, c.teams, v.teams);
   setCol_(row, c.link, v.link);
@@ -432,6 +460,7 @@ function addProject_(body) {
   var sheet = requireSheetByKeyword_('project', 'Projects');
   var c = projectColumns_(sheet);
   var v = projectValues_(body);
+  if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
 
   if (findProjectRow_(sheet, c, v.domain, v.id) >= 0) {
     throw new Error('ID already exists in this domain: ' + v.id);
@@ -448,6 +477,7 @@ function updateProject_(body) {
   var sheet = requireSheetByKeyword_('project', 'Projects');
   var c = projectColumns_(sheet);
   var v = projectValues_(body);
+  if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
 
   var rowIndex = findProjectRow_(sheet, c, v.domain, v.id);
   if (rowIndex < 0) throw new Error('ID not found: ' + v.id);
