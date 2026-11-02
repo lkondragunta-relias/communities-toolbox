@@ -51,6 +51,45 @@
 .org-missing { color: var(--text-muted); font-size: 12px; }
 .org-link { padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; font-weight: 600 !important; }
 .org-link:hover { text-decoration: underline; }
+.org-page a.org-link { text-decoration: none; }
+.org-page a.org-link:hover { text-decoration: underline; }
+.org-domain-back { justify-self: start; font-size: 13px; }
+.org-domain-detail { display: grid; gap: 22px; }
+.org-domain-layout { display: grid; grid-template-columns: minmax(0, 1fr) 290px; gap: 20px; align-items: start; }
+.org-domain-main, .org-domain-sidebar { display: grid; gap: 20px; min-width: 0; }
+.org-domain-detail .org-card { border-radius: 12px; padding: 22px; }
+.org-domain-detail .org-card > p { font-size: 13px; line-height: 1.65; }
+.org-contact-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 20px; }
+.org-contact-card { padding: 15px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-hover); min-width: 0; }
+.org-contact-card h4 { margin: 0 0 12px; font-size: 12px; color: var(--text-muted); }
+.org-contact-assignment { display: grid; justify-items: start; gap: 8px; padding-block: 14px; overflow-wrap: anywhere; }
+.org-contact-assignment + .org-contact-assignment { border-top: 1px solid var(--border); }
+.org-contact-assignment > span { font-size: 12px; }
+.org-domain-period { color: var(--text-muted); }
+.org-domain-notes { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: 13px; }
+.org-domain-organization { display: inline-block; font-size: 12px; border-radius: 5px; padding: 4px 8px; background: color-mix(in srgb, var(--org-color) 12%, var(--surface)); border: 1px solid color-mix(in srgb, var(--org-color) 40%, transparent); }
+.org-domain-table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 850px; }
+.org-domain-table th:first-child { min-width: 140px; }
+.org-domain-table td:nth-child(2) { min-width: 120px; }
+.org-domain-table td:nth-child(3) { min-width: 130px; }
+.org-domain-table td:nth-child(4) { min-width: 155px; }
+.org-domain-table td:last-child button { white-space: nowrap; }
+.org-domain-table td.org-domain-notes { min-width: 170px; }
+.org-head h2 { scroll-margin-top: 85px; }
+.org-domain-table th, .org-domain-table td { padding: 13px 10px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.org-domain-table thead th { font-size: 11px; color: var(--text-muted); background: var(--surface-hover); }
+.org-domain-table tr:last-child > * { border-bottom: 0; }
+.org-domain-table td > span:not(.org-domain-organization) { display: block; color: var(--text-muted); margin-top: 5px; }
+.org-domain-sidebar h4 { font-size: 12px; margin: 20px 0 10px; color: var(--text-muted); }
+.org-domain-sidebar ul { padding-left: 18px; font-size: 13px; line-height: 1.8; }
+@media (max-width: 1100px) {
+  .org-domain-layout { grid-template-columns: minmax(0, 1fr); }
+  .org-domain-sidebar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 650px) {
+  .org-contact-grid, .org-domain-sidebar { grid-template-columns: minmax(0, 1fr); }
+  .org-domain-detail .org-card { padding: 16px; }
+}
 .org-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 14px; }
 .org-card { border: 1px solid var(--border); border-radius: 8px; padding: 18px; background: var(--surface); min-width: 0; }
 .org-card h3 { font-size: 16px; margin: 0 0 8px; }

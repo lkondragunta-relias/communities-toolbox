@@ -91,6 +91,27 @@ export function filterOrgRows(rows, { query = "", domain = "", organization = ""
   );
 }
 
+export function organizationDomainDetails(model, domainId) {
+  const domain = model.domains.find((entry) => entry.id === domainId);
+  if (!domain) return null;
+  const filled = model.filled.filter((row) => row.domain === domainId);
+  return {
+    domain,
+    contacts: ["Eng leader", "PM", "UX"].map((category) => ({
+      category,
+      assignments: filled.filter((row) => row.category === category && row.personName),
+      notApplicable: model.notApplicable.filter((row) => row.domain === domainId && row.category === category),
+    })),
+    members: filled.filter((row) => row.category === "ENG Team members" && row.personName),
+    allocations: filled.filter((row) => !row.personName),
+    teams: [...new Map(filled.filter((row) => row.team).map((row) => [row.team, row.teamName])).values()],
+    organizations: [...new Set(filled.map((row) => row.organization).filter(Boolean))],
+    peopleCount: new Set(filled.filter((row) => row.personName).map(personKey)).size,
+    open: model.open.filter((row) => row.domain === domainId),
+    issues: model.issues.filter(({ row }) => row.domain === domainId),
+  };
+}
+
 export function groupOrgRows(rows, key) {
   const groups = new Map();
   rows.forEach((row) => {

@@ -86,7 +86,7 @@ export default function App() {
   const { view, params, navigate, replace } = useRoute();
   // Detail panes are addressable, so the drawer state lives in the URL:
   //   #/roadmap/platform/PLAT-1   #/operations/INC-0002
-  const selectedProject = params.length >= 2 ? { domain: params[0], id: params[1] } : null;
+  const selectedProject = ["timeline", "table"].includes(view) && params.length >= 2 ? { domain: params[0], id: params[1] } : null;
   const selectedIncidentId = view === "incidents" ? params[0] || null : null;
   const [filterState, setFilterState] = useState(INITIAL_FILTER_STATE);
   const [tooltip, setTooltip] = useState({ item: null, target: null, domain: null });
@@ -437,6 +437,9 @@ export default function App() {
               />
             ) : view === "org" ? (
               <OrgView
+                domainId={params[0] || ""}
+                dateScope={params[1] || ""}
+                navigate={navigate}
                 data={data}
                 adminUnlocked={adminUnlocked}
                 adminToken={adminToken}

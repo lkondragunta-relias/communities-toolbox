@@ -3,6 +3,8 @@ import { ORG_FIELDS, orgKey, organizationColor, personKey, validOrgDate, validat
 import { buildOrganization, filterOrgRows, groupOrgRows, orgTeamAndPartnerBadges } from "../../utils/orgUtils.js";
 import { deleteOrgAssignment, getGoogleSheetUrl, isLocalMode, saveOrgAssignment } from "../../services/sheetsApi";
 import OrgCommandChat from "../OrgCommandChat.jsx";
+import OrgDomainDetail from "../OrgDomainDetail.jsx";
+import { buildHash } from "../../hooks/useRoute.js";
 import "../../styles/org.css";
 
 const TABS = [
@@ -157,9 +159,15 @@ function AssignmentForm({ entry, model, onSave, onRemove, onClose }) {
   );
 }
 
-export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onLock, applyRoadmap, refetch }) {
-  const [asOf, setAsOf] = useState(today);
-  const [allAssignments, setAllAssignments] = useState(false);
+export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onLock, applyRoadmap, refetch, domainId = "", dateScope = "", navigate }) {
+  const [selectedDate, setAsOf] = useState(today);
+  const [showAll, setAllAssignments] = useState(false);
+  const asOf = domainId ? validOrgDate(dateScope) ? dateScope : today() : selectedDate;
+  const allAssignments = domainId ? dateScope === "all" : showAll;
+  const changeScope = (date, all) => {
+    setAsOf(date); setAllAssignments(all);
+    if (domainId) navigate("org", [domainId, all ? "all" : date]);
+  };
   const fullModel = useMemo(() => buildOrganization(data), [data]);
   const model = useMemo(() => buildOrganization(data, allAssignments ? "" : asOf), [data, allAssignments, asOf]);
   const [tab, setTab] = useState("domains");
@@ -172,6 +180,13 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const adminRef = useRef(null);
+  const headingRef = useRef(null);
+  useEffect(() => {
+    if (domainId) {
+      headingRef.current?.focus({ preventScroll: true });
+      headingRef.current?.scrollIntoView({ block: "start" });
+    }
+  }, [domainId]);
   const ready = Boolean(data.org?.configured);
   const sheetUrl = getGoogleSheetUrl();
   const rows = filterOrgRows([...model.filled, ...model.notApplicable], filters);
@@ -244,7 +259,7 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         };
         const members = assigned.filter((row) => row.category === "ENG Team members");
         return <tr key={domain.id}>
-          <th scope="row"><button type="button" className="org-link" onClick={() => { reset(); setFilter("domain", domain.id); setGroup("domain"); }}>{domain.name}</button>
+          <th scope="row"><a className="org-link" href={buildHash("org", [domain.id, allAssignments ? "all" : asOf])}>{domain.name}</a>
           </th>
           {roleCell("Eng leader")}{roleCell("PM")}{roleCell("UX")}
           <td><div className="org-chips">{assigned.some((row) => row.team) ? teamBadges(assigned) : missing}</div></td>
@@ -267,8 +282,13 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
     (!filters.query || orgKey(`${domain.name} ${category}`).includes(orgKey(filters.query))));
   return (
     <div className="org-page">
-      <header className="org-head"><div><h2>Domain ownership & team directory</h2><p>Find the people, teams, and partners supporting each domain.</p></div>
+      {domainId ? <a className="org-link org-domain-back" href={buildHash("org")} onClick={() => setTab("domains")}>← Back to domains</a> : null}
+      <header className="org-head"><div><h2 ref={headingRef} tabIndex={-1}>{domainId ? model.domains.find((domain) => domain.id === domainId)?.name || "Domain details" : "Domain ownership & team directory"}</h2><p>{domainId ? "People, roles, teams, and partners recorded for this domain." : "Find the people, teams, and partners supporting each domain."}</p></div>
         <div className="org-actions">
+          {domainId ? <button type="button" onClick={async () => {
+            try { await navigator.clipboard.writeText(window.location.href); setNotice("Domain link copied, including the selected date scope."); }
+            catch { setError("Could not copy the link. Copy the address from your browser instead."); }
+          }}>Copy domain link</button> : null}
           <button type="button" disabled={busy} onClick={async () => {
             setBusy(true); setError(""); setNotice("");
             try { await refetch({ throwOnError: true }); setNotice("Organization data refreshed."); }
@@ -276,25 +296,29 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
             finally { setBusy(false); }
           }}>Refresh</button>
           {sheetUrl ? <a className="org-workbook-button" href={sheetUrl} target="_blank" rel="noopener noreferrer">Open workbook</a> : null}
-          {adminUnlocked && ready ? <button type="button" className="org-primary" onClick={() => setModal({ kind: "assignment", entry: filters.domain ? { domain: filters.domain } : null })}>+ Add assignment</button> : null}
+          {adminUnlocked && ready && (!domainId || model.domains.some((domain) => domain.id === domainId)) ? <button type="button" className="org-primary" onClick={() => setModal({ kind: "assignment", entry: domainId || filters.domain ? { domain: domainId || filters.domain } : null })}>+ Add assignment</button> : null}
         </div>
       </header>
       {isLocalMode() ? <p role="status" className="org-callout"><strong>Local preview only.</strong> Data is stored in this browser, not your live Google Sheet. Domain choices are a local snapshot, not a live sync. Preview edits cannot change the live workbook.</p> : null}
       {!ready ? <p role="status" className="org-callout">Organization data is not connected yet. Add the Prod Eng Org tab and deploy the updated Code.gs web app, then refresh. No sample people are displayed.</p> : null}
       {error ? <p role="alert" className="roadmap__error">{error}</p> : null}
       {notice ? <p role="status">{notice}</p> : null}
-      <div className="org-stats">
+      {!domainId ? <div className="org-stats">
         {[[visibleDomains.length, "Domains"], [assignedPeople.size, "People"], [unique(rows.map((row) => row.team)).length, "Assigned teams"], [unique(rows.filter((row) => orgKey(row.organization) !== "relias").map((row) => row.organization)).length, "Partners"], [open.length, "Open roles"]].map(([value, label]) => <div key={label}><b>{value}</b><span>{label}</span></div>)}
-      </div>
+      </div> : null}
       <div className="org-snapshot-bar" role="group" aria-label="Organization snapshot">
         <Field label="As of"><input type="date" required min="0001-01-01" max="9999-12-31" disabled={allAssignments} value={asOf} onChange={(e) => {
           if (!validOrgDate(e.target.value)) { setError("Choose a valid snapshot date."); return; }
-          setAsOf(e.target.value); setFocusedPerson(""); setError("");
+          changeScope(e.target.value, false); setFocusedPerson(""); setError("");
         }} /></Field>
-        <button type="button" onClick={() => { setAsOf(today()); setAllAssignments(false); setFocusedPerson(""); }}>Today</button>
-        <Field label="Date scope"><select value={allAssignments ? "all" : "date"} onChange={(e) => { setAllAssignments(e.target.value === "all"); setFocusedPerson(""); }}><option value="date">Selected date</option><option value="all">All assignments</option></select></Field>
+        <button type="button" onClick={() => { changeScope(today(), false); setFocusedPerson(""); }}>Today</button>
+        <Field label="Date scope"><select value={allAssignments ? "all" : "date"} onChange={(e) => { changeScope(asOf, e.target.value === "all"); setFocusedPerson(""); }}><option value="date">Selected date</option><option value="all">All assignments</option></select></Field>
         <p className="org-snapshot-status" role="status">{allAssignments ? "All assignments across time" : <>Snapshot for <time dateTime={asOf}>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${asOf}T00:00:00Z`))}</time></>}</p>
       </div>
+      {domainId ? <>
+        {dateScope && dateScope !== "all" && !validOrgDate(dateScope) ? <p role="alert" className="org-callout">The link has an invalid date scope. Showing today instead; choose a date above.</p> : null}
+        {ready ? <OrgDomainDetail model={model} domainId={domainId} canEdit={adminUnlocked} onEdit={(row) => setModal({ kind: "assignment", entry: row })} /> : null}
+      </> : <>
       <div className="org-toolbar" role="group" aria-label="Organization filters">
         <Field label="Search"><input type="search" placeholder="Find people or teams…" value={filters.query} onChange={(e) => setFilter("query", e.target.value)} /></Field>
         <Field label="Domain"><select value={filters.domain} onChange={(e) => setFilter("domain", e.target.value)}><option value="">All domains</option>{model.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.name}</option>)}</select></Field>
@@ -368,7 +392,8 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
           </article>) : <p>No invalid assignment rows.</p>}
         </>}
       </section>
-      {adminUnlocked && ready && [...model.filled, ...model.notApplicable].some((row) => !row.personName) ? <details className="org-section"><summary>Manage team allocations & explicit UX None</summary>
+      </>}
+      {!domainId && adminUnlocked && ready && [...model.filled, ...model.notApplicable].some((row) => !row.personName) ? <details className="org-section"><summary>Manage team allocations & explicit UX None</summary>
         {[...model.filled, ...model.notApplicable].filter((row) => !row.personName).map((row) => <div key={row.id} className="org-allocation"><span>{row.domainName} · {row.status === "Not applicable" ? "UX: None" : `${row.teamName} · ${row.organization}`} · {assignmentPeriod(row)}</span><button type="button" disabled={busy} onClick={() => setModal({ kind: "assignment", entry: row })}>Edit</button><button type="button" disabled={busy} onClick={() => remove(row)}>Remove</button></div>)}
       </details> : null}
       <footer ref={adminRef} className="org-admin">{adminUnlocked ? <button type="button" onClick={onLock}>Lock editing</button> :
