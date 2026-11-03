@@ -80,6 +80,11 @@ const S = {
   ),
 
   /* --- controls --- */
+  pencil: (
+    <>
+      <path d="m15 5 4 4M4 20l4-1 12-12a2.8 2.8 0 0 0-4-4L4 15z" />
+    </>
+  ),
   calendar: (
     <>
       <rect x="3" y="5" width="18" height="16" rx="2" />

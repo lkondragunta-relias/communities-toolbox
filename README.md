@@ -300,6 +300,65 @@ no fictitious people are seeded. Viewing follows the Toolbox's existing access
 model; the frontend password is not server-side confidentiality for the GET API.
 
 Organization regression checks: `node --test scripts/org.test.mjs`.
+
+### Skills and person profiles
+
+The organization Skills picker supports multiple selections using **AND** matching:
+Vue + Craft CMS shows only people with both skills. It combines with role, partner,
+domain, search, and assignment-date filters in Domains, Teams, and People. On a
+domain homepage, the Skills picker narrows people independently of directory role
+and partner filters. Clear skills to restore all assignments. Open positions and
+team-only allocations are not people and do not match skill filters.
+When filtering Teams by skills, matching people without a team appear under
+**No team recorded**, and matching person roles are not restricted to engineers.
+
+Click a person's name to open a shareable profile at
+`#/prod-eng-org/person/<Person ID>/<date-or-all>`. It shows work focus, skills,
+GitHub username, organization, and domains from existing assignments in the
+selected date scope. Profile fields are current metadata, not historical snapshots.
+Profiles remain accessible across dates even when a person has no active assignments.
+Back returns to the previous view without clearing its in-session filters.
+
+Three additional tabs in the same workbook store metadata without changing the
+existing assignment columns:
+
+| Tab | Headers | Meaning |
+| --- | --- | --- |
+| People Profiles | Person ID, Work Focus, GitHub Username | One profile per existing person |
+| Skills Catalog | Skill ID, Skill Name | Unique dropdown options, including unused skills |
+| Person Skills | Person ID, Skill ID | One row per person/skill pair |
+
+Headers are matched by name, so columns may be reordered. Person IDs are the
+existing assignment identities, not names. Work focus can be blank, Frontend,
+Backend, Full-stack, or QA automation. GitHub can be blank or a username, not a URL.
+Missing metadata tabs are read as empty; they are created on first successful
+write. Invalid IDs, duplicate entries, and invalid reference values are reported,
+not silently counted. New people initially have no skill tags.
+
+Existing admin unlock controls profile and catalog edits. Edit a person to assign
+or uncheck skills, change focus/GitHub, or create a new catalog skill. Save the
+profile to assign a newly created skill. Catalog creation itself persists even
+if the profile edit is cancelled. Manage skill catalog in the directory to add
+unused skills, rename skills without changing IDs, or delete a skill after
+confirming its affected-person count. Removing a person-skill link does not delete
+the catalog option. Catalog deletion removes matching links but never assignment
+rows. Stale profile or catalog writes are rejected and require refresh.
+Deleting a person's last recorded assignment also clears their profile and
+person-skill links to avoid orphan identities. Other people's records and catalog
+options are unchanged. End an assignment instead to preserve the person and history.
+
+Deploy the updated Apps Script for the new API actions (`saveOrgPersonProfile`,
+`saveOrgSkill`, `deleteOrgSkill`). Until then, existing assignments continue to
+work and skills editing displays a backend-update message. Local preview mirrors
+these tables and writes in IndexedDB, with no real roster or researched skills
+bundled into the app. Optional admin-only `importOrgSkills` accepts only simple
+profile/catalog/link fields, validates references, and refuses to overwrite any
+existing skills data. It is for initial setup, not periodic research sync.
+
+Research evidence, commit histories, and assessment notes are not stored in these
+tabs, returned by the API, or shipped in the frontend. Viewing and write access
+follow the existing Toolbox model; skills do not introduce a new permission model.
+
 Pull requests to `main` run these checks and a production build. Merging to
 `main` triggers the existing Pages deployment. Its `VITE_SHEETS_API_URL`,
 `VITE_GOOGLE_SHEET_URL`, and `VITE_ADMIN_TOKEN` repository secrets must match

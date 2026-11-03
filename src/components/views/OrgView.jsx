@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ORG_FIELDS, orgKey, organizationColor, personKey, validOrgDate, validateOrgAssignment } from "../../config/orgConfig.js";
 import { buildOrganization, filterOrgRows, groupOrgRows, orgTeamAndPartnerBadges } from "../../utils/orgUtils.js";
-import { deleteOrgAssignment, getGoogleSheetUrl, isLocalMode, saveOrgAssignment } from "../../services/sheetsApi";
+import { deleteOrgAssignment, getGoogleSheetUrl, isLocalMode, saveOrgAssignment, saveOrgPersonProfile, saveOrgSkill, deleteOrgSkill } from "../../services/sheetsApi";
 import OrgCommandChat from "../OrgCommandChat.jsx";
 import OrgDomainDetail from "../OrgDomainDetail.jsx";
+import OrgPersonDetail, { OrgSkillsManager } from "../OrgPersonDetail.jsx";
+import OrgSkillPicker from "../OrgSkillPicker.jsx";
+import Icon from "../Icon.jsx";
 import { buildHash } from "../../hooks/useRoute.js";
 import "../../styles/org.css";
 
@@ -71,7 +74,7 @@ function AssignmentForm({ entry, model, onSave, onRemove, onClose }) {
   const options = (values, current) => unique([...values, current]);
   const removeEntry = async () => {
     const domain = model.domains.find((item) => item.id === entry.domain)?.name || entry.domain;
-    if (!window.confirm(`Remove ${entry.personName || entry.status} · ${entry.role} from ${domain}? This deletes this assignment's recorded history. Other assignments are unchanged. Use an end date instead to preserve history.`)) return;
+    if (!window.confirm(`Remove ${entry.personName || entry.status} · ${entry.role} from ${domain}? This deletes this assignment's recorded history. Other assignments are unchanged. If it is the person's last assignment, their profile and skill links are also removed. Use an end date instead to preserve history.`)) return;
     setBusy(true);
     setError("");
     try { await onRemove(entry); onClose(); }
@@ -159,20 +162,21 @@ function AssignmentForm({ entry, model, onSave, onRemove, onClose }) {
   );
 }
 
-export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onLock, applyRoadmap, refetch, domainId = "", dateScope = "", navigate }) {
+export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onLock, applyRoadmap, refetch, domainId = "", personId = "", dateScope = "", navigate }) {
   const [selectedDate, setAsOf] = useState(today);
   const [showAll, setAllAssignments] = useState(false);
-  const asOf = domainId ? validOrgDate(dateScope) ? dateScope : today() : selectedDate;
-  const allAssignments = domainId ? dateScope === "all" : showAll;
+  const detail = Boolean(domainId || personId);
+  const asOf = detail ? validOrgDate(dateScope) ? dateScope : today() : selectedDate;
+  const allAssignments = detail ? dateScope === "all" : showAll;
   const changeScope = (date, all) => {
     setAsOf(date); setAllAssignments(all);
-    if (domainId) navigate("org", [domainId, all ? "all" : date]);
+    if (detail) navigate("org", personId ? ["person", personId, all ? "all" : date] : [domainId, all ? "all" : date]);
   };
   const fullModel = useMemo(() => buildOrganization(data), [data]);
   const model = useMemo(() => buildOrganization(data, allAssignments ? "" : asOf), [data, allAssignments, asOf]);
   const [tab, setTab] = useState("domains");
   const [group, setGroup] = useState("domain");
-  const [filters, setFilters] = useState({ query: "", domain: "", organization: "", role: "" });
+  const [filters, setFilters] = useState({ query: "", domain: "", organization: "", role: "", skills: [] });
   const [focusedPerson, setFocusedPerson] = useState("");
   const [modal, setModal] = useState(null);
   const [token, setToken] = useState("");
@@ -181,23 +185,28 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
   const [busy, setBusy] = useState(false);
   const adminRef = useRef(null);
   const headingRef = useRef(null);
+  const [personBack, setPersonBack] = useState(() => buildHash("org"));
   useEffect(() => {
-    if (domainId) {
+    if (domainId || personId) {
       headingRef.current?.focus({ preventScroll: true });
       headingRef.current?.scrollIntoView({ block: "start" });
     }
-  }, [domainId]);
+  }, [domainId, personId]);
   const ready = Boolean(data.org?.configured);
   const sheetUrl = getGoogleSheetUrl();
-  const rows = filterOrgRows([...model.filled, ...model.notApplicable], filters);
+  const rows = filterOrgRows([...model.filled, ...model.notApplicable], filters, model.personSkills);
+  const skillFiltersActive = filters.skills.length > 0;
+  const skillsSupported = Boolean(data.org?.skillsSupported);
+  const domainModel = skillFiltersActive ? { ...model, filled: filterOrgRows(model.filled, { skills: filters.skills }, model.personSkills), notApplicable: [], open: [] } : model;
+  const personHref = (row) => buildHash("org", ["person", personKey(row), allAssignments ? "all" : asOf]);
+  const personLink = (row, label = row.personName) => <a className="org-link org-badge" style={{ "--org-color": organizationColor(row.organization, model.organizations) }} href={personHref(row)} onClick={() => setPersonBack(window.location.hash)}>{label}</a>;
   const assignedPeople = new Set(rows.filter((row) => row.personName).map(personKey));
   const people = model.people.filter((person) => (!focusedPerson || person.key === focusedPerson) &&
     person.assignments.some((row) => rows.some((match) => match.id === row.id)));
   const setFilter = (key, value) => { setFilters((previous) => ({ ...previous, [key]: value })); setFocusedPerson(""); };
-  const reset = () => { setFilters({ query: "", domain: "", organization: "", role: "" }); setFocusedPerson(""); };
-  const focusPerson = (row) => { reset(); setFocusedPerson(personKey(row)); setTab("people"); };
+  const reset = () => { setFilters({ query: "", domain: "", organization: "", role: "", skills: [] }); setFocusedPerson(""); };
   const focusTeamOrPartner = (item) => {
-    reset(); setFilters({ query: item.kind === "team" ? item.label : "", domain: "", organization: item.kind === "partner" ? item.organization : "", role: "" }); setTab("teams");
+    setFilters((previous) => ({ ...previous, query: item.kind === "team" ? item.label : "", domain: "", organization: item.kind === "partner" ? item.organization : "", role: "" })); setFocusedPerson(""); setTab("teams");
   };
   const applyResult = (result) => {
     if (!result.org?.configured) throw new Error("The server did not return organization data. Deploy the updated Apps Script and retry.");
@@ -214,8 +223,17 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
     applyResult(await deleteOrgAssignment({ adminToken, id: row.id }));
     setNotice("Assignment removed. Other assignments are unchanged.");
   };
+  const saveSkills = async (action, entry) => {
+    if (!adminUnlocked) throw new Error("Unlock editing before changing skills.");
+    if (!skillsSupported) throw new Error("Update the connected backend to support person profiles and skills.");
+    const result = await action({ ...entry, adminToken });
+    if (!result.org?.skillsSupported) throw new Error("The server did not return skills data. Refresh and retry.");
+    applyResult(result);
+    if (action === deleteOrgSkill) setFilters((previous) => ({ ...previous, skills: previous.skills.filter((id) => id !== entry.id) }));
+    return result;
+  };
   const remove = async (row) => {
-    if (!window.confirm(`Remove this ${row.role} assignment for ${row.domainName}? Other assignments are not affected.`)) return;
+    if (!window.confirm(`Remove this ${row.role} assignment for ${row.domainName}? Other assignments are not affected. If this is the person's last recorded assignment, their profile and skill links are also removed. Use an end date to preserve history.`)) return;
     setBusy(true); setError("");
     try { await deleteAssignment(row); }
     catch (err) { setError(err.message); }
@@ -234,10 +252,9 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
     }).map((row) => {
       const repeated = adminUnlocked && entries.filter((entry) => personKey(entry) === personKey(row)).length > 1;
       const label = repeated ? `${row.personName} · ${row.domainName} · ${row.role} · ${assignmentPeriod(row)}` : row.personName;
-      return badge(label, row.organization, () => {
-        if (adminUnlocked) setModal({ kind: "assignment", entry: row });
-        else focusPerson(row);
-      }, adminUnlocked ? row.id : personKey(row));
+      return <span key={adminUnlocked ? row.id : personKey(row)} className="org-member-actions">{personLink(row, label)}
+        {adminUnlocked ? <button type="button" className="org-assignment-edit" onClick={() => setModal({ kind: "assignment", entry: row })}
+          aria-label={`Edit assignment for ${row.personName} in ${row.domainName}`} title={`Edit ${row.personName}'s assignment`}><Icon name="pencil" size={5} /></button> : null}</span>;
     });
   };
   const teamBadges = (entries) => orgTeamAndPartnerBadges(entries).map((item) =>
@@ -271,19 +288,20 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
   const visibleDomains = model.domains.filter((domain) =>
     (!filters.domain || filters.domain === domain.id) &&
     (!filters.query || orgKey(domain.name).includes(orgKey(filters.query)) || rows.some((row) => row.domain === domain.id)) &&
-    ((!filters.role && !filters.organization) || rows.some((row) => row.domain === domain.id))
+    ((!filters.role && !filters.organization && !skillFiltersActive) || rows.some((row) => row.domain === domain.id))
   );
   const grouped = group === "domain" ? [] : groupOrgRows(rows, group);
   const teamGroups = groupOrgRows(rows.filter((row) => row.team), "team");
-  const vacantTeams = model.teams.filter((team) => !model.filled.some((row) => row.team === team.id) && !filters.domain && !filters.organization && !filters.role &&
+  const unteamedPeople = skillFiltersActive ? rows.filter((row) => row.personName && !row.team) : [];
+  const vacantTeams = model.teams.filter((team) => !model.filled.some((row) => row.team === team.id) && !filters.domain && !filters.organization && !filters.role && !skillFiltersActive &&
     (!filters.query || orgKey(team.label).includes(orgKey(filters.query))));
-  const open = filterOrgRows(model.open, filters);
-  const gaps = model.gaps.filter(({ domain, category }) => (!filters.domain || domain.id === filters.domain) &&
+  const open = filterOrgRows(model.open, filters, model.personSkills);
+  const gaps = model.gaps.filter(({ domain, category }) => !skillFiltersActive && (!filters.domain || domain.id === filters.domain) &&
     (!filters.query || orgKey(`${domain.name} ${category}`).includes(orgKey(filters.query))));
   return (
     <div className="org-page">
-      {domainId ? <a className="org-link org-domain-back" href={buildHash("org")} onClick={() => setTab("domains")}>← Back to domains</a> : null}
-      <header className="org-head"><div><h2 ref={headingRef} tabIndex={-1}>{domainId ? model.domains.find((domain) => domain.id === domainId)?.name || "Domain details" : "Domain ownership & team directory"}</h2><p>{domainId ? "People, roles, teams, and partners recorded for this domain." : "Find the people, teams, and partners supporting each domain."}</p></div>
+      {personId ? <a className="org-link org-domain-back" href={personBack}>Back to previous view</a> : domainId ? <a className="org-link org-domain-back" href={buildHash("org")} onClick={() => setTab("domains")}>← Back to domains</a> : null}
+      <header className="org-head"><div><h2 ref={headingRef} tabIndex={-1}>{personId ? fullModel.people.find((person) => person.key === personId)?.name || "Person details" : domainId ? model.domains.find((domain) => domain.id === domainId)?.name || "Domain details" : "Domain ownership & team directory"}</h2><p>{personId ? "Work focus, skills, GitHub, and assigned domains." : domainId ? "People, roles, teams, and partners recorded for this domain." : "Find the people, teams, and partners supporting each domain."}</p></div>
         <div className="org-actions">
           {domainId ? <button type="button" onClick={async () => {
             try { await navigator.clipboard.writeText(window.location.href); setNotice("Domain link copied, including the selected date scope."); }
@@ -296,14 +314,15 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
             finally { setBusy(false); }
           }}>Refresh</button>
           {sheetUrl ? <a className="org-workbook-button" href={sheetUrl} target="_blank" rel="noopener noreferrer">Open workbook</a> : null}
-          {adminUnlocked && ready && (!domainId || model.domains.some((domain) => domain.id === domainId)) ? <button type="button" className="org-primary" onClick={() => setModal({ kind: "assignment", entry: domainId || filters.domain ? { domain: domainId || filters.domain } : null })}>+ Add assignment</button> : null}
+          {adminUnlocked && ready && !personId && (!domainId || model.domains.some((domain) => domain.id === domainId)) ? <button type="button" className="org-primary" onClick={() => setModal({ kind: "assignment", entry: domainId || filters.domain ? { domain: domainId || filters.domain } : null })}>+ Add assignment</button> : null}
         </div>
       </header>
       {isLocalMode() ? <p role="status" className="org-callout"><strong>Local preview only.</strong> Data is stored in this browser, not your live Google Sheet. Domain choices are a local snapshot, not a live sync. Preview edits cannot change the live workbook.</p> : null}
       {!ready ? <p role="status" className="org-callout">Organization data is not connected yet. Add the Prod Eng Org tab and deploy the updated Code.gs web app, then refresh. No sample people are displayed.</p> : null}
       {error ? <p role="alert" className="roadmap__error">{error}</p> : null}
       {notice ? <p role="status">{notice}</p> : null}
-      {!domainId ? <div className="org-stats">
+      {ready && !skillsSupported ? <p role="status" className="org-callout">The connected backend needs the skills update. Existing assignments still work; profile editing is unavailable until it is updated.</p> : null}
+      {!detail ? <div className="org-stats">
         {[[visibleDomains.length, "Domains"], [assignedPeople.size, "People"], [unique(rows.map((row) => row.team)).length, "Assigned teams"], [unique(rows.filter((row) => orgKey(row.organization) !== "relias").map((row) => row.organization)).length, "Partners"], [open.length, "Open roles"]].map(([value, label]) => <div key={label}><b>{value}</b><span>{label}</span></div>)}
       </div> : null}
       <div className="org-snapshot-bar" role="group" aria-label="Organization snapshot">
@@ -315,17 +334,23 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         <Field label="Date scope"><select value={allAssignments ? "all" : "date"} onChange={(e) => { changeScope(asOf, e.target.value === "all"); setFocusedPerson(""); }}><option value="date">Selected date</option><option value="all">All assignments</option></select></Field>
         <p className="org-snapshot-status" role="status">{allAssignments ? "All assignments across time" : <>Snapshot for <time dateTime={asOf}>{new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(`${asOf}T00:00:00Z`))}</time></>}</p>
       </div>
-      {domainId ? <>
+      {personId ? <OrgPersonDetail key={personId} personId={personId} fullModel={fullModel} model={model} supported={skillsSupported} canEdit={adminUnlocked}
+        dateScope={allAssignments ? "all" : asOf} onSave={(entry) => saveSkills(saveOrgPersonProfile, entry)}
+        onSaveSkill={(entry) => saveSkills(saveOrgSkill, entry)} onDeleteSkill={(entry) => saveSkills(deleteOrgSkill, entry)} /> : domainId ? <>
         {dateScope && dateScope !== "all" && !validOrgDate(dateScope) ? <p role="alert" className="org-callout">The link has an invalid date scope. Showing today instead; choose a date above.</p> : null}
-        {ready ? <OrgDomainDetail model={model} domainId={domainId} canEdit={adminUnlocked} onEdit={(row) => setModal({ kind: "assignment", entry: row })} /> : null}
+        <OrgSkillPicker skills={model.skills} value={filters.skills} onChange={(value) => setFilter("skills", value)} disabled={!skillsSupported} />
+        {skillFiltersActive ? <p>Showing people with all selected skills. Clear skills to see all domain assignments.</p> : null}
+        {ready ? <OrgDomainDetail model={domainModel} domainId={domainId} personLink={personLink} skillsFiltered={skillFiltersActive} canEdit={adminUnlocked} onEdit={(row) => setModal({ kind: "assignment", entry: row })} /> : null}
       </> : <>
       <div className="org-toolbar" role="group" aria-label="Organization filters">
         <Field label="Search"><input type="search" placeholder="Find people or teams…" value={filters.query} onChange={(e) => setFilter("query", e.target.value)} /></Field>
         <Field label="Domain"><select value={filters.domain} onChange={(e) => setFilter("domain", e.target.value)}><option value="">All domains</option>{model.domains.map((domain) => <option key={domain.id} value={domain.id}>{domain.name}</option>)}</select></Field>
         <Field label="Organization / partner"><select value={filters.organization} onChange={(e) => setFilter("organization", e.target.value)}><option value="">All organizations</option>{model.organizations.map((item) => <option key={item.name}>{item.name}</option>)}</select></Field>
         <Field label="Role"><select value={filters.role} onChange={(e) => setFilter("role", e.target.value)}><option value="">All roles</option>{model.roles.map((item) => <option key={item.name}>{item.name}</option>)}</select></Field>
+        <OrgSkillPicker skills={model.skills} value={filters.skills} onChange={(value) => setFilter("skills", value)} disabled={!skillsSupported} />
         <button type="button" onClick={reset}>Clear filters</button>
       </div>
+      {skillFiltersActive ? <p role="status">Showing people with all selected skills. Open positions and team-only allocations are not skill matches.</p> : null}
       {!isLocalMode() && ready && !data.org?.assignmentDatesSupported ? <p className="org-callout">The connected API needs a one-time update to support dates. Once updated, Save manages the worksheet automatically—no setup scripts required.</p> : null}
       <div className="org-legend" aria-label="Organization colors">
         {model.organizations.map((item) => badge(item.name, item.name, () => setFilter("organization", item.name)))}
@@ -361,15 +386,17 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
             <p>{unique(entries.map((row) => row.domainName)).join(" · ")}</p>
             {groupOrgRows(entries, "organization").map(([name, members]) => <section key={name} className="org-member-group"><h4>{badge(name, name, () => setFilter("organization", name))}</h4>
               <p>{unique(members.map((row) => row.domainName)).join(" · ")}</p>
-              <div className="org-chips">{memberBadges(members.filter((row) => row.category === "ENG Team members" && row.personName))}</div>
-              {!members.some((row) => row.category === "ENG Team members" && row.personName) ? <p className="org-missing">No engineering members assigned</p> : null}
+              <div className="org-chips">{memberBadges(members.filter((row) => (skillFiltersActive || row.category === "ENG Team members") && row.personName))}</div>
+              {!members.some((row) => (skillFiltersActive || row.category === "ENG Team members") && row.personName) ? <p className="org-missing">No engineering members assigned</p> : null}
             </section>)}
           </article>)}
+          {unteamedPeople.length ? <article className="org-card"><h3>No team recorded</h3><p>Matching people whose team is optional or not recorded.</p>{memberGroups(unteamedPeople)}</article> : null}
           {vacantTeams.map((team) => <article key={team.id} className="org-card"><h3>{team.label}</h3><p className="org-missing">No domain or member assignments yet</p></article>)}
-          {!teamGroups.length && !vacantTeams.length ? <p className="org-empty">No teams match these filters.</p> : null}
+          {!teamGroups.length && !vacantTeams.length && !unteamedPeople.length ? <p className="org-empty">No teams match these filters.</p> : null}
         </div> : tab === "people" ? <>
           {focusedPerson ? <button type="button" onClick={() => setFocusedPerson("")}>Show all people</button> : null}
-          <div className="org-cards">{people.map((person) => <article key={person.key} className="org-card"><h3>{badge(person.name, person.organization, () => setFilter("organization", person.organization), person.key)}</h3><p>{person.organization} · {unique(person.assignments.map((row) => row.domain)).length} domains</p>
+          <div className="org-cards">{people.map((person) => <article key={person.key} className="org-card"><h3>{personLink(person.assignments[0])}</h3><p>{person.organization} · {unique(person.assignments.map((row) => row.domain)).length} domains</p>
+            <p>{person.workFocus}</p><div className="org-chips">{person.skills.map((skill) => <span className="org-skill-tag" key={skill.id}>{skill.name}</span>)}</div>
             <ul className="org-assignments">{person.assignments.filter((row) => rows.some((match) => match.id === row.id)).map((row) => <li key={row.id}><strong>{row.domainName}</strong><span>{row.role}{row.teamName ? ` · ${row.teamName}` : ""}</span><span>{assignmentPeriod(row)}</span>{row.notes ? <p>{row.notes}</p> : null}
               {adminUnlocked ? <div className="org-actions"><button type="button" disabled={busy} onClick={() => setModal({ kind: "assignment", entry: row })}>Edit</button><button type="button" disabled={busy} onClick={() => remove(row)}>Remove</button></div> : null}
             </li>)}</ul>
@@ -393,7 +420,8 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         </>}
       </section>
       </>}
-      {!domainId && adminUnlocked && ready && [...model.filled, ...model.notApplicable].some((row) => !row.personName) ? <details className="org-section"><summary>Manage team allocations & explicit UX None</summary>
+      {adminUnlocked && ready && !personId ? <OrgSkillsManager model={fullModel} disabled={!skillsSupported} onSave={(entry) => saveSkills(saveOrgSkill, entry)} onDelete={(entry) => saveSkills(deleteOrgSkill, entry)} /> : null}
+      {!detail && adminUnlocked && ready && [...model.filled, ...model.notApplicable].some((row) => !row.personName) ? <details className="org-section"><summary>Manage team allocations & explicit UX None</summary>
         {[...model.filled, ...model.notApplicable].filter((row) => !row.personName).map((row) => <div key={row.id} className="org-allocation"><span>{row.domainName} · {row.status === "Not applicable" ? "UX: None" : `${row.teamName} · ${row.organization}`} · {assignmentPeriod(row)}</span><button type="button" disabled={busy} onClick={() => setModal({ kind: "assignment", entry: row })}>Edit</button><button type="button" disabled={busy} onClick={() => remove(row)}>Remove</button></div>)}
       </details> : null}
       <footer ref={adminRef} className="org-admin">{adminUnlocked ? <button type="button" onClick={onLock}>Lock editing</button> :

@@ -661,8 +661,9 @@ export default function App() {
               />
             ) : view === "org" ? (
               <OrgView
-                domainId={params[0] || ""}
-                dateScope={params[1] || ""}
+                domainId={params[0] === "person" ? "" : params[0] || ""}
+                personId={params[0] === "person" ? params[1] || "" : ""}
+                dateScope={params[0] === "person" ? params[2] || "" : params[1] || ""}
                 navigate={navigate}
                 data={data}
                 adminUnlocked={adminUnlocked}

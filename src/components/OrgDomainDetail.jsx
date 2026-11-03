@@ -4,13 +4,13 @@ import { organizationDomainDetails } from "../utils/orgUtils.js";
 const period = (row) => `${row.startDate || "No start limit"} – ${row.endDate || "No end limit"}`;
 const contactLabels = { "Eng leader": "Engineering leaders", PM: "Product managers", UX: "UX contacts" };
 
-export default function OrgDomainDetail({ model, domainId, canEdit, onEdit }) {
+export default function OrgDomainDetail({ model, domainId, canEdit, onEdit, personLink, skillsFiltered = false }) {
   const details = organizationDomainDetails(model, domainId);
   if (!details) return <section className="org-card"><h3>Domain not found</h3><p>This domain is not in the connected organization domain list. Return to Domains to choose another.</p></section>;
   const edit = (row) => canEdit ? <button type="button" onClick={() => onEdit(row)} aria-label={`Edit ${row.personName || row.status} · ${row.role} · ${period(row)}`}>Edit assignment</button> : null;
   const organization = (name) => <span className="org-domain-organization" style={{ "--org-color": organizationColor(name, model.organizations) }}>{name}</span>;
   const assignment = (row) => <article key={row.id} className="org-contact-assignment">
-    <strong>{row.personName || (row.status === "Not applicable" ? "None — explicitly no UX assigned" : row.status)}</strong>
+    <strong>{row.personName && personLink ? personLink(row) : row.personName || (row.status === "Not applicable" ? "None — explicitly no UX assigned" : row.status)}</strong>
     <span>{row.role}{row.teamName ? ` · ${row.teamName}` : ""}</span>
     {row.organization ? organization(row.organization) : null}
     <span className="org-domain-period">{period(row)}</span>
@@ -39,7 +39,7 @@ export default function OrgDomainDetail({ model, domainId, canEdit, onEdit }) {
           {details.members.length ? <div className="org-table-wrap"><table className="org-domain-table">
             <thead><tr>{["Person", "Role / team", "Organization", "Assignment dates", "Notes", ...(canEdit ? ["Edit"] : [])].map((label) => <th scope="col" key={label}>{label}</th>)}</tr></thead>
             <tbody>{details.members.map((row) => <tr key={row.id}>
-              <th scope="row">{row.personName}</th><td>{row.role}{row.teamName ? <span>{row.teamName}</span> : null}</td>
+              <th scope="row">{personLink ? personLink(row) : row.personName}</th><td>{row.role}{row.teamName ? <span>{row.teamName}</span> : null}</td>
               <td>{organization(row.organization)}</td><td>{period(row)}</td>
               <td className="org-domain-notes">{row.notes || "—"}</td>{canEdit ? <td>{edit(row)}</td> : null}
             </tr>)}</tbody>
@@ -59,7 +59,7 @@ export default function OrgDomainDetail({ model, domainId, canEdit, onEdit }) {
           {!details.organizations.length ? <p className="org-missing">No organization assignments recorded.</p> : null}
           <h4>Team-only allocations</h4>{details.allocations.length ? details.allocations.map((row) => <article className="org-contact-assignment" key={row.id}><strong>{row.teamName}</strong>{organization(row.organization)}<span className="org-domain-period">{period(row)}</span>{row.notes ? <p className="org-domain-notes">{row.notes}</p> : null}{edit(row)}</article>) : <p className="org-missing">No separate team allocations recorded.</p>}
         </section>
-        <section className="org-card"><h3>About this view</h3><p>Uses the existing organization worksheet and selected date scope. Directory filters do not hide assignments here.</p><p>Assignment dates describe recorded plans and history, not workload or availability. Blank dates have no time limit.</p><p>Review confirmations, primary owners, backups, and contact links are not recorded in the current data.</p></section>
+        <section className="org-card"><h3>About this view</h3><p>Uses the existing organization worksheet and selected date scope. {skillsFiltered ? "Only people with all selected skills are shown." : "Directory role and organization filters do not hide assignments here."}</p><p>Assignment dates describe recorded plans and history, not workload or availability. Blank dates have no time limit.</p><p>Review confirmations, primary owners, backups, and contact links are not recorded in the current data.</p></section>
       </aside>
     </div>
   </div>;

@@ -12,6 +12,7 @@ import Dexie from "dexie";
 import { DEFAULT_STATUSES } from "../config/statusConfig";
 import { DEFAULT_PRIORITIES } from "../config/priorityConfig";
 import { DEFAULT_ORG_ROLES, DEFAULT_ORGANIZATIONS, ORG_FIELDS, ORG_CATEGORIES, validateOrgAssignment } from "../config/orgConfig.js";
+import { plainSkillText, profileSnapshot, resolveOrgSkills, validatePersonProfile } from "../utils/orgSkills.js";
 
 export const LOCAL_ADMIN_TOKEN =
   (import.meta.env.VITE_LOCAL_ADMIN_TOKEN || "local-dev").trim();
@@ -132,6 +133,12 @@ db.version(10).upgrade(async (tx) => {
   if (isPureDemo && added.length) {
     await tx.table("projects").bulkAdd(added.map((p) => ({ ...p, key: projectKey(p.domain, p.id) })));
   }
+});
+
+db.version(11).stores({
+  orgProfiles: "personId",
+  orgSkills: "id, name",
+  orgPersonSkills: "[personId+skillId], personId, skillId",
 });
 
 function projectKey(domain, id) {
@@ -357,17 +364,51 @@ export async function getRoadmap() {
 }
 
 async function readLocalOrg() {
-  const [assignments, roles, organizations, domains, teams] = await Promise.all([
+  const [assignments, roles, organizations, domains, teams, profiles, skills, personSkills] = await Promise.all([
     db.orgAssignments.toArray(), db.orgRoles.toArray(), db.orgOrganizations.toArray(), db.orgDomains.orderBy("order").toArray(), db.orgTeams.toArray(),
+    db.orgProfiles.toArray(), db.orgSkills.toArray(), db.orgPersonSkills.toArray(),
   ]);
-  return { configured: true, assignmentDatesSupported: true, assignments, roles, organizations, domains, teams };
+  return { configured: true, assignmentDatesSupported: true, skillsSupported: true, assignments, roles, organizations, domains, teams, profiles, skills, personSkills };
 }
 
 async function writeLocalOrg(payload) {
-  return db.transaction("rw", db.orgAssignments, db.orgRoles, db.orgOrganizations, db.orgDomains, db.orgTeams, async () => {
+  return db.transaction("rw", db.orgAssignments, db.orgRoles, db.orgOrganizations, db.orgDomains, db.orgTeams, db.orgProfiles, db.orgSkills, db.orgPersonSkills, async () => {
     const org = await readLocalOrg();
     const action = payload.action.toLowerCase();
-    if (action === "saveorgdomain") {
+    if (["saveorgpersonprofile", "saveorgskill", "deleteorgskill"].includes(action)) {
+      const issues = resolveOrgSkills(org, org.assignments).issues;
+      if (issues.length) throw new Error(issues.join(" "));
+      if (action === "saveorgpersonprofile") {
+        const profile = { personId: String(payload.personId || "").trim(), workFocus: String(payload.workFocus || "").trim(), githubUsername: String(payload.githubUsername || "").trim(), skillIds: payload.skillIds };
+        const message = validatePersonProfile(profile, org);
+        if (message) throw new Error(message);
+        const existing = org.profiles.find((p) => p.personId === profile.personId);
+        const snapshot = profileSnapshot({ ...existing, skillIds: org.personSkills.filter((l) => l.personId === profile.personId).map((l) => l.skillId) });
+        if (!payload.expected || JSON.stringify(profileSnapshot(payload.expected)) !== JSON.stringify(snapshot)) throw new Error("This profile changed since you opened it. Refresh and retry.");
+        await db.orgProfiles.put({ personId: profile.personId, workFocus: profile.workFocus, githubUsername: profile.githubUsername });
+        await db.orgPersonSkills.where("personId").equals(profile.personId).delete();
+        await db.orgPersonSkills.bulkPut(profile.skillIds.map((skillId) => ({ personId: profile.personId, skillId })));
+      } else {
+        const id = String(payload.id || "").trim();
+        const existing = org.skills.find((s) => s.id === id);
+        if (id && !existing) throw new Error("Skill no longer exists. Refresh and retry.");
+        if (existing && existing.name !== payload.expectedName) throw new Error("This skill changed. Refresh and retry.");
+        if (action === "deleteorgskill") {
+          if (!existing) throw new Error("Skill ID is required.");
+          const linked = org.personSkills.filter((l) => l.skillId === id).map((l) => l.personId).sort();
+          if (!Array.isArray(payload.expectedPersonIds) || JSON.stringify([...payload.expectedPersonIds].sort()) !== JSON.stringify(linked)) throw new Error("Skill assignments changed. Refresh and retry.");
+          await db.orgPersonSkills.where("skillId").equals(id).delete();
+          await db.orgSkills.delete(id);
+        } else {
+          const name = String(payload.name || "").trim();
+          if (!plainSkillText(name)) throw new Error("Enter a plain-text skill name of at most 100 characters.");
+          if (org.skills.some((s) => s.id !== id && s.name.toLowerCase() === name.toLowerCase())) throw new Error("A skill with this name already exists.");
+          const skillId = id || crypto.randomUUID();
+          await db.orgSkills.put({ id: skillId, name });
+          return { ok: true, skillId, org: await readLocalOrg() };
+        }
+      }
+    } else if (action === "saveorgdomain") {
       const id = String(payload.id || "").trim();
       const name = String(payload.name || "").trim();
       if (!id || !name || !Number.isFinite(Number(payload.order)) || String(payload.order).trim() === "") throw new Error("Domain ID, name, and numeric order are required.");
@@ -398,7 +439,9 @@ async function writeLocalOrg(payload) {
       if (id && !await db.orgAssignments.get(id)) throw new Error("Assignment no longer exists. Refresh and retry.");
       if (action === "deleteorgassignment") {
         if (!id) throw new Error("Assignment ID is required.");
+        const entry = await db.orgAssignments.get(id);
         await db.orgAssignments.delete(id);
+        await pruneLocalPersonMetadata(entry.personId);
       } else {
         const row = Object.fromEntries(ORG_FIELDS.map((key) => [key, String(payload[key] || "").trim()]));
         const existing = org.assignments.find((entry) => entry.id === id);
@@ -409,10 +452,17 @@ async function writeLocalOrg(payload) {
         if (error) throw new Error(error);
         row.id ||= crypto.randomUUID();
         await db.orgAssignments.put(row);
+        if (existing && existing.personId !== row.personId) await pruneLocalPersonMetadata(existing.personId);
       }
     }
     return { ok: true, org: await readLocalOrg() };
   });
+}
+
+async function pruneLocalPersonMetadata(personId) {
+  if (!personId || await db.orgAssignments.where("personId").equals(personId).count()) return;
+  await db.orgProfiles.delete(personId);
+  await db.orgPersonSkills.where("personId").equals(personId).delete();
 }
 
 function parseTeams(value) {
@@ -524,7 +574,7 @@ async function updateIncidentRow(payload) {
 /** Mirror of the remote POST handler; mutates the DB. (Local mode has no auth.) */
 export async function postToLocal(payload) {
   const action = String(payload.action || "add").trim().toLowerCase();
-  if (["saveorgassignment", "deleteorgassignment", "saveorgrole", "saveorgorganization", "saveorgdomain", "saveorgteam", "deleteorgdomain"].includes(action)) {
+  if (["saveorgassignment", "deleteorgassignment", "saveorgrole", "saveorgorganization", "saveorgdomain", "saveorgteam", "deleteorgdomain", "saveorgpersonprofile", "saveorgskill", "deleteorgskill"].includes(action)) {
     return writeLocalOrg(payload);
   }
   if (action === "addteam") {

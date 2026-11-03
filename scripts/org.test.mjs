@@ -7,6 +7,7 @@ import { buildOrganization, filterOrgRows, organizationDomainDetails, orgTeamAnd
 import { buildHash, parseHash } from "../src/hooks/useRoute.js";
 import { orgCommandDate, parseOrgCommand, prepareOrgCommand, validateOrgCommandPreview } from "../src/utils/orgCommands.js";
 import { chooseOrgConversation, matchOrgText, orgConversationTurn } from "../src/utils/orgConversation.js";
+import { profileSnapshot, validGitHubUsername, validatePersonProfile } from "../src/utils/orgSkills.js";
 
 const domains = [{ id: "wound-care", name: "Wound Care" }, { id: "freecme", name: "FreeCME" }];
 const teams = [{ id: "core", label: "Core" }];
@@ -21,6 +22,144 @@ const commandModel = (entries = [assignment()], overrides = {}) => buildOrganiza
   domains, teams, org: { ...org, assignments: entries, ...overrides },
 });
 const commandPreview = (input, model = commandModel(), id) => prepareOrgCommand(parseOrgCommand(input), model, id);
+
+const skillData = {
+  skills: [{ id: "vue", name: "Vue" }, { id: "craft", name: "Craft CMS" }, { id: "ai", name: "AI" }],
+  profiles: [{ personId: "p1", workFocus: "Frontend", githubUsername: "example-dev" }],
+  personSkills: [{ personId: "p1", skillId: "vue" }, { personId: "p1", skillId: "craft" }, { personId: "p2", skillId: "vue" }],
+};
+
+test("skills use AND matching across assignments without duplicate people or implicit team matches", () => {
+  const model = commandModel([
+    assignment(), assignment({ id: "other-domain", domain: "freecme" }),
+    assignment({ id: "other-person", personId: "p2", personName: "Second Person" }),
+    assignment({ id: "open", personId: "", personName: "", status: "Open" }),
+    assignment({ id: "team", personId: "", personName: "", role: "Team & Partners" }),
+  ], skillData);
+  assert.equal(model.people.length, 2);
+  assert.deepEqual(model.people[0].skills.map((s) => s.id).sort(), ["craft", "vue"]);
+  assert.equal(model.people[0].workFocus, "Frontend");
+  assert.equal(model.people[0].githubUsername, "example-dev");
+  assert.equal(filterOrgRows(model.filled, {}, model.personSkills).length, 4);
+  assert.equal(filterOrgRows(model.filled, { skills: ["vue"] }, model.personSkills).length, 3);
+  assert.equal(filterOrgRows(model.filled, { skills: ["vue", "craft"] }, model.personSkills).length, 2);
+  assert.equal(filterOrgRows(model.filled, { skills: ["ai"] }, model.personSkills).length, 0);
+  assert.equal(filterOrgRows(model.open, { skills: ["vue"] }, model.personSkills).length, 0);
+  assert.equal(filterOrgRows(model.filled, { skills: ["craft"], domain: "freecme", role: "Engineer", organization: "Relias" }, model.personSkills).length, 1);
+  assert.equal(model.skills.find((s) => s.id === "ai").name, "AI");
+});
+
+test("profile data is separate from date-scoped assignments, missing metadata and same-name people stay distinct", () => {
+  const entries = [assignment({ endDate: "2026-11-01" }), assignment({ id: "a2", personId: "p2", organization: "BrillMark" })];
+  const data = { domains, teams, org: { ...org, ...skillData, assignments: entries } };
+  const full = buildOrganization(data);
+  const scoped = buildOrganization(data, "2026-11-02");
+  assert.equal(scoped.people.length, 1);
+  assert.equal(full.people[0].githubUsername, "example-dev");
+  assert.equal(scoped.people[0].githubUsername, "");
+  assert.deepEqual(scoped.people[0].skillIds, ["vue"]);
+  assert.deepEqual(commandModel().people[0].skills, []);
+  assert.deepEqual(parseHash(buildHash("org", ["person", "person / ID", "all"])), { view: "org", params: ["person", "person / ID", "all"] });
+});
+
+test("invalid skill references and duplicate metadata are surfaced, not silently counted", () => {
+  const model = commandModel([assignment()], {
+    profiles: [{ personId: "missing", workFocus: "Expert", githubUsername: "https://github.com/foo" }],
+    skills: [{ id: "one", name: "Vue" }, { id: "two", name: "vue" }],
+    personSkills: [{ personId: "p1", skillId: "missing" }],
+  });
+  assert.equal(model.configurationIssues.length, 3);
+  assert.equal(model.skills.length, 1);
+  assert.equal(model.people[0].skills.length, 0);
+  assert(validGitHubUsername("example-dev"));
+  assert(!validGitHubUsername("bad--name"));
+  assert(!validGitHubUsername("-bad"));
+  assert(!validGitHubUsername("https://github.com/foo"));
+  assert(validatePersonProfile({ personId: "p1", skillIds: ["missing"] }, { ...context, ...skillData, assignments: [assignment()] }));
+});
+
+function skillsBackend() {
+  const env = backend();
+  env.api.setupProdEngOrgSheet();
+  env.api.saveOrgAssignment_(assignment({ id: "" }));
+  env.api.saveOrgAssignment_(assignment({ id: "", personId: "p2", personName: "Second Person" }));
+  return env;
+}
+
+test("metadata import is whitelisted, preserves assignment columns, and never overwrites existing skills", () => {
+  const { api, book } = skillsBackend();
+  const before = JSON.stringify(book.getSheetByName("Prod Eng Org").cells);
+  const result = api.importOrgSkills_({ ...skillData, profiles: skillData.profiles.map((p) => ({ ...p, evidence: "private research", commits: [1] })) });
+  assert.equal(result.org.skills.length, 3);
+  assert.equal(result.org.profiles.length, 1);
+  assert.equal(JSON.stringify(book.getSheetByName("Prod Eng Org").cells), before);
+  assert(!JSON.stringify(result).includes("private research"));
+  assert.deepEqual(Object.keys(result.org.profiles[0]).sort(), ["githubUsername", "personId", "workFocus"]);
+  assert.throws(() => api.importOrgSkills_(skillData), /already exists/);
+});
+
+test("profile saves add replace and remove skill links, guard concurrent edits and preserve other people", () => {
+  const { api } = skillsBackend();
+  api.importOrgSkills_(skillData);
+  const snapshot = () => JSON.parse(JSON.stringify(api.orgProfileSnapshot_(api.readOrg_(), "p1")));
+  const original = snapshot();
+  const result = api.saveOrgPersonProfile_({ personId: "p1", workFocus: "Full-stack", githubUsername: "example-dev", skillIds: ["ai"], expected: original });
+  assert.equal(result.org.profiles[0].workFocus, "Full-stack");
+  assert.equal(result.org.personSkills.filter((l) => l.personId === "p1").length, 1);
+  assert.equal(result.org.personSkills.filter((l) => l.personId === "p2").length, 1);
+  assert.equal(result.org.skills.length, 3);
+  assert.throws(() => api.saveOrgPersonProfile_({ personId: "p1", skillIds: [], expected: original }), /changed/);
+  api.saveOrgPersonProfile_({ personId: "p1", workFocus: "", githubUsername: "", skillIds: [], expected: snapshot() });
+  assert.equal(api.readOrg_().personSkills.filter((l) => l.personId === "p1").length, 0);
+  api.saveOrgPersonProfile_({ personId: "p2", workFocus: "Frontend", githubUsername: "", skillIds: ["vue"], expected: { workFocus: "", githubUsername: "", skillIds: ["vue"] } });
+  assert.equal(api.readOrg_().profiles.length, 2);
+  assert.throws(() => api.saveOrgPersonProfile_({ personId: "missing", skillIds: [] }), /existing Person ID/);
+  assert.throws(() => api.saveOrgPersonProfile_({ personId: "p1", skillIds: ["missing"] }), /current catalog/);
+});
+
+test("catalog CRUD supports unused skills, stable renames, guarded deletion and case-insensitive names", () => {
+  const { api } = skillsBackend();
+  api.importOrgSkills_(skillData);
+  const created = api.saveOrgSkill_({ name: "New capability" });
+  assert(created.skillId);
+  assert.equal(created.org.skills.length, 4);
+  assert.throws(() => api.saveOrgSkill_({ name: "new CAPABILITY" }), /already exists/);
+  assert.throws(() => api.saveOrgSkill_({ name: "=formula" }), /plain-text/);
+  api.saveOrgSkill_({ id: "vue", name: "Vue.js", expectedName: "Vue" });
+  assert.equal(api.readOrg_().personSkills.filter((l) => l.skillId === "vue").length, 2);
+  assert.throws(() => api.saveOrgSkill_({ id: "vue", name: "Other", expectedName: "Vue" }), /changed/);
+  assert.throws(() => api.deleteOrgSkill_({ id: "vue", expectedName: "Vue.js", expectedPersonIds: ["p1"] }), /assignments changed/);
+  api.deleteOrgSkill_({ id: "vue", expectedName: "Vue.js", expectedPersonIds: ["p1", "p2"] });
+  assert.equal(api.readOrg_().skills.length, 3);
+  assert.equal(api.readOrg_().personSkills.length, 1);
+  assert.equal(api.readOrg_().assignments.length, 2);
+});
+
+test("metadata headers may be reordered and invalid imports cannot create or overwrite rows", () => {
+  const { api, book } = skillsBackend();
+  assert.throws(() => api.importOrgSkills_({ ...skillData, personSkills: [{ personId: "missing", skillId: "vue" }] }), /existing Person IDs/);
+  assert(!book.getSheetByName("Skills Catalog"));
+  book.insertSheet("People Profiles").cells = [["GitHub Username", "Person ID", "Work Focus"]];
+  book.insertSheet("Skills Catalog").cells = [["Skill Name", "Skill ID"]];
+  book.insertSheet("Person Skills").cells = [["Skill ID", "Person ID"]];
+  api.importOrgSkills_(skillData);
+  assert.equal(api.readOrg_().profiles[0].githubUsername, "example-dev");
+  api.saveOrgPersonProfile_({ personId: "p1", skillIds: ["ai"], expected: profileSnapshot({ ...skillData.profiles[0], skillIds: ["vue", "craft"] }) });
+  assert.equal(api.readOrg_().personSkills.find((l) => l.personId === "p1").skillId, "ai");
+});
+
+test("removing the last assignment cleans only that person's metadata and leaves catalog options intact", () => {
+  const { api } = skillsBackend();
+  api.importOrgSkills_(skillData);
+  const assignmentId = api.readOrg_().assignments.find((row) => row.personId === "p1").id;
+  api.saveOrgAssignment_(assignment({ id: "", domain: "freecme" }));
+  api.deleteOrgAssignment_({ id: assignmentId });
+  assert.equal(api.readOrg_().profiles.length, 1);
+  api.deleteOrgAssignment_({ id: api.readOrg_().assignments.find((row) => row.personId === "p1").id });
+  assert.equal(api.readOrg_().profiles.length, 0);
+  assert.equal(api.readOrg_().personSkills.length, 1);
+  assert.equal(api.readOrg_().skills.length, 3);
+});
 
 test("domain homepages reuse scoped assignments without inventing ownership or hiding contacts", () => {
   const entries = [
@@ -723,6 +862,7 @@ class Sheet {
     const sheet = this;
     return {
       getValues() { return Array.from({ length: rows }, (_, r) => Array.from({ length: columns }, (_, c) => sheet.cells[row + r - 1]?.[column + c - 1] ?? "")); },
+      getValue() { return this.getValues()[0][0]; },
       getDisplayValues() { return this.getValues().map((entry) => entry.map(String)); },
       setValues(values) {
         values.forEach((entry, r) => entry.forEach((value, c) => {
