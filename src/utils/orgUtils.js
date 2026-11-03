@@ -1,4 +1,5 @@
 import { ORG_CATEGORIES, ORG_FIELDS, assignmentActiveOn, assignmentKey, orgKey, personKey, validOrgDate, validateOrgAssignment } from "../config/orgConfig.js";
+import { enrichOrgPerson, matchesOrgSkills, resolveOrgSkills } from "./orgSkills.js";
 
 export function buildOrganization(data, asOf = "") {
   if (asOf && !validOrgDate(asOf)) throw new Error("Choose a valid organization snapshot date.");
@@ -77,15 +78,18 @@ export function buildOrganization(data, asOf = "") {
       ))
       .map((category) => ({ domain, category }));
   });
-  return { ...context, assignments, filled, notApplicable, people: [...people.values()], gaps, issues, configurationIssues: [...new Set(configurationIssues)], open: valid.filter((row) => row.status === "Open") };
+  const skillsData = resolveOrgSkills(source, assignments);
+  return { ...context, ...skillsData, assignments, filled, notApplicable, people: [...people.values()].map((person) => enrichOrgPerson(person, skillsData)), gaps, issues,
+    configurationIssues: [...new Set([...configurationIssues, ...skillsData.issues])], open: valid.filter((row) => row.status === "Open") };
 }
 
-export function filterOrgRows(rows, { query = "", domain = "", organization = "", role = "" }) {
+export function filterOrgRows(rows, { query = "", domain = "", organization = "", role = "", skills = [] }, personSkills = []) {
   const search = orgKey(query);
   return rows.filter((row) =>
     (!domain || row.domain === domain) &&
     (!organization || row.organization === organization) &&
     (!role || row.role === role) &&
+    matchesOrgSkills(row, skills, personSkills) &&
     (!search || [row.domainName, row.personName, row.teamName, row.organization, row.role, row.notes]
       .some((value) => orgKey(value).includes(search)))
   );

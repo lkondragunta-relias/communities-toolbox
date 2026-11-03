@@ -90,6 +90,10 @@ function doPostLocked_(e) {
     if (action === 'setupincidentconfig') return jsonResponse(setupIncidentConfig_());
     if (action === 'saveorgassignment') return jsonResponse(saveOrgAssignment_(body));
     if (action === 'deleteorgassignment') return jsonResponse(deleteOrgAssignment_(body));
+    if (action === 'saveorgpersonprofile') return jsonResponse(saveOrgPersonProfile_(body));
+    if (action === 'saveorgskill') return jsonResponse(saveOrgSkill_(body));
+    if (action === 'deleteorgskill') return jsonResponse(deleteOrgSkill_(body));
+    if (action === 'importorgskills') return jsonResponse(importOrgSkills_(body));
     if (action === 'saveorgrole') return jsonResponse(saveOrgDefinition_(body, true));
     if (action === 'saveorgorganization') return jsonResponse(saveOrgDefinition_(body, false));
     if (action === 'saveorgdomain') return jsonResponse(saveOrgDomain_(body));
@@ -1714,6 +1718,10 @@ function readOrg_() {
   return {
     configured: true,
     assignmentDatesSupported: true,
+    skillsSupported: true,
+    profiles: orgSkillsRows_('People Profiles', ['Person ID', 'Work Focus', 'GitHub Username'], ['personId', 'workFocus', 'githubUsername']),
+    skills: orgSkillsRows_('Skills Catalog', ['Skill ID', 'Skill Name'], ['id', 'name']),
+    personSkills: orgSkillsRows_('Person Skills', ['Person ID', 'Skill ID'], ['personId', 'skillId']),
     domains: domains,
     teams: teams,
     assignments: orgRows_(sheet).map(function (row) {
@@ -1730,6 +1738,213 @@ function readOrg_() {
     roles: roles,
     organizations: organizations,
   };
+}
+
+var ORG_WORK_FOCUS = ['Frontend', 'Backend', 'Full-stack', 'QA automation'];
+
+function orgSkillsRows_(name, headers, fields) {
+  var sheet = ss_().getSheetByName(name);
+  if (!sheet) return [];
+  var map = headerMap_(sheet);
+  var columns = headers.map(function (header) {
+    var col = map[normalize_(header)];
+    if (!col) throw new Error('Missing "' + header + '" in ' + name + '.');
+    return col;
+  });
+  if (sheet.getLastRow() < 2) return [];
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getDisplayValues().map(function (values, index) {
+    var entry = { _row: index + 2 };
+    fields.forEach(function (field, i) { entry[field] = String(cell_(values, columns[i]) || '').trim(); });
+    return entry;
+  }).filter(function (entry) {
+    return fields.some(function (field) { return entry[field]; });
+  }).map(function (entry) {
+    var out = {};
+    fields.forEach(function (field) { out[field] = entry[field]; });
+    return out;
+  });
+}
+
+function orgSkillsSheet_(name, headers) {
+  var sheet = ss_().getSheetByName(name);
+  if (!sheet) {
+    sheet = ss_().insertSheet(name);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sheet.setFrozenRows(1);
+  }
+  var map = headerMap_(sheet);
+  headers.forEach(function (header) {
+    if (!map[normalize_(header)]) throw new Error('Missing "' + header + '" in ' + name + '.');
+  });
+  return sheet;
+}
+
+function writeOrgSkillsRow_(sheet, headers, values, row) {
+  if (row < 2) throw new Error('Could not locate the metadata row. Refresh and retry.');
+  if (row > sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(), row - sheet.getMaxRows());
+  var map = headerMap_(sheet);
+  headers.forEach(function (header, i) {
+    var value = String(values[i] || '');
+    sheet.getRange(row, map[normalize_(header)]).setNumberFormat('@').setValue(/^[=+@-]/.test(value) ? "'" + value : value);
+  });
+}
+
+function findOrgMetadataRow_(sheet, column, id) {
+  if (sheet.getLastRow() < 2) return -1;
+  var rows = sheet.getRange(2, column, sheet.getLastRow() - 1, 1).getDisplayValues();
+  for (var index = 0; index < rows.length; index++) {
+    if (String(rows[index][0]).trim() === id) return index + 2;
+  }
+  return -1;
+}
+
+function orgPlainSkill_(value) {
+  return Boolean(value) && value.length <= 100 && !/^[=+@-]/.test(value);
+}
+
+function orgValidGitHub_(value) {
+  return !value || /^(?!.*--)[a-z\d](?:[a-z\d-]{0,37}[a-z\d])?$/i.test(value);
+}
+
+function validateOrgSkills_(org) {
+  var personIds = Object.create(null);
+  org.assignments.forEach(function (row) { if (row.personId && row.personName) personIds[row.personId] = true; });
+  var ids = Object.create(null), names = Object.create(null), profiles = Object.create(null), links = Object.create(null);
+  org.skills.forEach(function (skill) {
+    if (!orgPlainSkill_(skill.id) || !orgPlainSkill_(skill.name) || ids[skill.id] || names[normalize_(skill.name)]) throw new Error('Skills Catalog needs unique plain-text Skill IDs and names. Correct the workbook before saving.');
+    ids[skill.id] = true; names[normalize_(skill.name)] = true;
+  });
+  org.profiles.forEach(function (profile) {
+    if (!personIds[profile.personId] || profiles[profile.personId] || (profile.workFocus && ORG_WORK_FOCUS.indexOf(profile.workFocus) < 0) || !orgValidGitHub_(profile.githubUsername)) throw new Error('People Profiles has an invalid Person ID, duplicate, work focus, or GitHub username. Correct the workbook before saving.');
+    profiles[profile.personId] = true;
+  });
+  org.personSkills.forEach(function (link) {
+    var key = JSON.stringify([link.personId, link.skillId]);
+    if (!personIds[link.personId] || !ids[link.skillId] || links[key]) throw new Error('Person Skills needs existing Person IDs and Skill IDs, with no duplicate pairs. Correct the workbook before saving.');
+    links[key] = true;
+  });
+}
+
+function orgProfileSnapshot_(org, personId) {
+  var profile = org.profiles.filter(function (entry) { return entry.personId === personId; })[0] || {};
+  return {
+    workFocus: profile.workFocus || '', githubUsername: profile.githubUsername || '',
+    skillIds: org.personSkills.filter(function (entry) { return entry.personId === personId; }).map(function (entry) { return entry.skillId; }).sort(),
+  };
+}
+
+function assertOrgProfile_(body, org) {
+  var personId = String(body.personId || '').trim();
+  if (!org.assignments.some(function (row) { return row.personId === personId && row.personName; })) throw new Error('This person needs an existing Person ID in the assignment sheet.');
+  var focus = String(body.workFocus || '').trim();
+  var username = String(body.githubUsername || '').trim();
+  if (focus && ORG_WORK_FOCUS.indexOf(focus) < 0) throw new Error('Choose a configured work focus.');
+  if (!orgValidGitHub_(username)) throw new Error('Enter a GitHub username, not a URL.');
+  if (!Array.isArray(body.skillIds) || body.skillIds.some(function (id, i) { return body.skillIds.indexOf(id) !== i || !org.skills.some(function (skill) { return skill.id === id; }); })) throw new Error('Choose unique skills from the current catalog.');
+  return { personId: personId, workFocus: focus, githubUsername: username, skillIds: body.skillIds };
+}
+
+function saveOrgPersonProfile_(body) {
+  var org = readOrg_();
+  validateOrgSkills_(org);
+  var profile = assertOrgProfile_(body, org);
+  var expected = body.expected;
+  var live = orgProfileSnapshot_(org, profile.personId);
+  if (!expected || !Array.isArray(expected.skillIds) || JSON.stringify([expected.workFocus, expected.githubUsername, expected.skillIds.slice().sort()]) !== JSON.stringify([live.workFocus, live.githubUsername, live.skillIds])) throw new Error('This profile changed since you opened it. Refresh and retry.');
+  var sheet = orgSkillsSheet_('People Profiles', ['Person ID', 'Work Focus', 'GitHub Username']);
+  var map = headerMap_(sheet);
+  var row = findOrgMetadataRow_(sheet, map['person id'], profile.personId);
+  if (row < 2) row = Math.max(2, sheet.getLastRow() + 1);
+  var links = orgSkillsSheet_('Person Skills', ['Person ID', 'Skill ID']);
+  var columns = headerMap_(links);
+  writeOrgSkillsRow_(sheet, ['Person ID', 'Work Focus', 'GitHub Username'], [profile.personId, profile.workFocus, profile.githubUsername], row);
+  for (var r = links.getLastRow(); r >= 2; r--) {
+    if (String(links.getRange(r, columns['person id']).getValue()) === profile.personId) {
+      links.getRange(r, columns['person id']).clearContent();
+      links.getRange(r, columns['skill id']).clearContent();
+    }
+  }
+  profile.skillIds.forEach(function (skillId) {
+    writeOrgSkillsRow_(links, ['Person ID', 'Skill ID'], [profile.personId, skillId], Math.max(2, links.getLastRow() + 1));
+  });
+  return { ok: true, org: readOrg_() };
+}
+
+function saveOrgSkill_(body) {
+  var org = readOrg_();
+  validateOrgSkills_(org);
+  var id = String(body.id || '').trim();
+  var name = String(body.name || '').trim();
+  if (!orgPlainSkill_(name)) throw new Error('Enter a plain-text skill name of at most 100 characters.');
+  var existing = org.skills.filter(function (skill) { return skill.id === id; })[0];
+  if (id && !existing) throw new Error('Skill no longer exists. Refresh and retry.');
+  if (existing && body.expectedName !== existing.name) throw new Error('This skill changed. Refresh and retry.');
+  if (org.skills.some(function (skill) { return skill.id !== id && normalize_(skill.name) === normalize_(name); })) throw new Error('A skill with this name already exists.');
+  id = id || Utilities.getUuid();
+  var sheet = orgSkillsSheet_('Skills Catalog', ['Skill ID', 'Skill Name']);
+  var row = existing ? findOrgMetadataRow_(sheet, headerMap_(sheet)['skill id'], id) : Math.max(2, sheet.getLastRow() + 1);
+  writeOrgSkillsRow_(sheet, ['Skill ID', 'Skill Name'], [id, name], row);
+  return { ok: true, skillId: id, org: readOrg_() };
+}
+
+function deleteOrgSkill_(body) {
+  var org = readOrg_();
+  validateOrgSkills_(org);
+  var skill = org.skills.filter(function (entry) { return entry.id === body.id; })[0];
+  if (!skill) throw new Error('Skill no longer exists. Refresh and retry.');
+  var people = org.personSkills.filter(function (link) { return link.skillId === skill.id; }).map(function (link) { return link.personId; }).sort();
+  if (body.expectedName !== skill.name || !Array.isArray(body.expectedPersonIds) || JSON.stringify(body.expectedPersonIds.slice().sort()) !== JSON.stringify(people)) throw new Error('This skill or its assignments changed. Refresh and retry.');
+  var links = ss_().getSheetByName('Person Skills');
+  if (links) {
+    var map = headerMap_(links);
+    for (var r = links.getLastRow(); r >= 2; r--) {
+      if (String(links.getRange(r, map['skill id']).getValue()) === skill.id) {
+        links.getRange(r, map['person id']).clearContent();
+        links.getRange(r, map['skill id']).clearContent();
+      }
+    }
+  }
+  var sheet = ss_().getSheetByName('Skills Catalog');
+  var columns = headerMap_(sheet);
+  var row = findOrgMetadataRow_(sheet, columns['skill id'], skill.id);
+  sheet.getRange(row, columns['skill id']).clearContent();
+  sheet.getRange(row, columns['skill name']).clearContent();
+  return { ok: true, org: readOrg_() };
+}
+
+function importOrgSkills_(body) {
+  var org = readOrg_();
+  if (org.skills.length || org.profiles.length || org.personSkills.length) throw new Error('Skills data already exists. Import stopped without overwriting it.');
+  if (!Array.isArray(body.skills) || !Array.isArray(body.profiles) || !Array.isArray(body.personSkills)) throw new Error('Skills, profiles and person-skill arrays are required.');
+  // Only the public profile fields are accepted. Research evidence stays outside the workbook.
+  var next = {
+    assignments: org.assignments,
+    skills: body.skills.map(function (s) { return { id: String(s.id || '').trim(), name: String(s.name || '').trim() }; }),
+    profiles: body.profiles.map(function (p) { return { personId: String(p.personId || '').trim(), workFocus: String(p.workFocus || '').trim(), githubUsername: String(p.githubUsername || '').trim() }; }),
+    personSkills: body.personSkills.map(function (l) { return { personId: String(l.personId || '').trim(), skillId: String(l.skillId || '').trim() }; }),
+  };
+  validateOrgSkills_(next);
+  [['Skills Catalog', ['Skill ID', 'Skill Name'], next.skills.map(function (s) { return [s.id, s.name]; })],
+    ['People Profiles', ['Person ID', 'Work Focus', 'GitHub Username'], next.profiles.map(function (p) { return [p.personId, p.workFocus, p.githubUsername]; })],
+    ['Person Skills', ['Person ID', 'Skill ID'], next.personSkills.map(function (l) { return [l.personId, l.skillId]; })],
+  ].forEach(function (table) {
+    var sheet = orgSkillsSheet_(table[0], table[1]);
+    table[2].forEach(function (values, index) { writeOrgSkillsRow_(sheet, table[1], values, index + 2); });
+  });
+  return { ok: true, org: readOrg_() };
+}
+
+function pruneOrgPersonMetadata_(personId) {
+  if (!personId || orgRows_(orgSheet_()).some(function (row) { return row.personId === personId && row.personName; })) return;
+  [['People Profiles', ['Person ID', 'Work Focus', 'GitHub Username']], ['Person Skills', ['Person ID', 'Skill ID']]].forEach(function (table) {
+    var sheet = ss_().getSheetByName(table[0]);
+    if (!sheet) return;
+    var columns = headerMap_(sheet);
+    for (var row = sheet.getLastRow(); row >= 2; row--) {
+      if (String(sheet.getRange(row, columns['person id']).getValue()) !== personId) continue;
+      table[1].forEach(function (header) { sheet.getRange(row, columns[normalize_(header)]).clearContent(); });
+    }
+  });
 }
 
 /** Safe to run from the editor without deploying the web app. Never resets rows. */
@@ -1891,6 +2106,7 @@ function saveOrgAssignment_(body) {
     // Keep user-entered names and notes as literal text, never sheet formulas.
     sheet.getRange(target, columns[field]).setValue(/^[=+@-]/.test(row[field]) ? "'" + row[field] : row[field]);
   });
+  if (existing && existing.personId !== row.personId) pruneOrgPersonMetadata_(existing.personId);
   return { ok: true, org: readOrg_() };
 }
 
@@ -1901,12 +2117,14 @@ function lastOrgAssignmentRow_(sheet) {
 
 function deleteOrgAssignment_(body) {
   var sheet = requireOrgSheet_();
+  readOrg_();
   var matches = orgRows_(sheet).filter(function (row) { return orgAssignmentKey_(row) === String(body.id || '').trim(); });
   if (matches.length > 1) throw new Error('Duplicate assignment ID. Give each row a unique ID in the sheet.');
   var entry = matches[0];
   if (!entry) throw new Error('Assignment changed or no longer exists. Refresh and retry.');
   var columns = orgColumns_(sheet);
   ORG_FIELDS.forEach(function (field) { if (columns[field]) sheet.getRange(entry._row, columns[field]).clearContent(); });
+  pruneOrgPersonMetadata_(entry.personId);
   return { ok: true, org: readOrg_() };
 }
 

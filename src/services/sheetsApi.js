@@ -341,6 +341,18 @@ export function deleteOrgDomain({ adminToken, id }) {
   return postToSheetsApi({ action: "deleteOrgDomain", adminToken, id });
 }
 
+export function saveOrgPersonProfile({ adminToken, ...entry }) {
+  return postToSheetsApi({ action: "saveOrgPersonProfile", adminToken, ...entry });
+}
+
+export function saveOrgSkill({ adminToken, ...entry }) {
+  return postToSheetsApi({ action: "saveOrgSkill", adminToken, ...entry });
+}
+
+export function deleteOrgSkill({ adminToken, ...entry }) {
+  return postToSheetsApi({ action: "deleteOrgSkill", adminToken, ...entry });
+}
+
 /* ------------------ Operations timeline (Incidents tab) ------------------ */
 
 function incidentPayload(entry) {
