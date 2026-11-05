@@ -59,7 +59,7 @@ export default function OrgDomainDetail({ model, domainId, canEdit, onEdit, pers
           {!details.organizations.length ? <p className="org-missing">No organization assignments recorded.</p> : null}
           <h4>Team-only allocations</h4>{details.allocations.length ? details.allocations.map((row) => <article className="org-contact-assignment" key={row.id}><strong>{row.teamName}</strong>{organization(row.organization)}<span className="org-domain-period">{period(row)}</span>{row.notes ? <p className="org-domain-notes">{row.notes}</p> : null}{edit(row)}</article>) : <p className="org-missing">No separate team allocations recorded.</p>}
         </section>
-        <section className="org-card"><h3>About this view</h3><p>Uses the existing organization worksheet and selected date scope. {skillsFiltered ? "Only people with all selected skills are shown." : "Directory role and organization filters do not hide assignments here."}</p><p>Assignment dates describe recorded plans and history, not workload or availability. Blank dates have no time limit.</p><p>Review confirmations, primary owners, backups, and contact links are not recorded in the current data.</p></section>
+        <section className="org-card"><h3>About this view</h3><p>Uses the existing organization worksheet and selected date scope. {skillsFiltered ? "Matches any selected skill and any selected focus area." : "Directory role and organization filters do not hide assignments here."}</p><p>Assignment dates describe recorded plans and history, not workload or availability. Blank dates have no time limit.</p><p>Review confirmations, primary owners, backups, and contact links are not recorded in the current data.</p></section>
       </aside>
     </div>
   </div>;

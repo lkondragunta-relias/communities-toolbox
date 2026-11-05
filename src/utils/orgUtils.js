@@ -83,13 +83,15 @@ export function buildOrganization(data, asOf = "") {
     configurationIssues: [...new Set([...configurationIssues, ...skillsData.issues])], open: valid.filter((row) => row.status === "Open") };
 }
 
-export function filterOrgRows(rows, { query = "", domain = "", organization = "", role = "", skills = [] }, personSkills = []) {
+export function filterOrgRows(rows, { query = "", domain = "", organization = "", role = "", skills = [], focusAreas = [] }, personSkills = [], profiles = []) {
   const search = orgKey(query);
   return rows.filter((row) =>
     (!domain || row.domain === domain) &&
     (!organization || row.organization === organization) &&
     (!role || row.role === role) &&
     matchesOrgSkills(row, skills, personSkills) &&
+    (!focusAreas.length || Boolean(row.personName && profiles.some((profile) =>
+      profile.personId === personKey(row) && focusAreas.includes(profile.workFocus)))) &&
     (!search || [row.domainName, row.personName, row.teamName, row.organization, row.role, row.notes]
       .some((value) => orgKey(value).includes(search)))
   );

@@ -303,13 +303,16 @@ Organization regression checks: `node --test scripts/org.test.mjs`.
 
 ### Skills and person profiles
 
-The organization Skills picker supports multiple selections using **AND** matching:
-Vue + Craft CMS shows only people with both skills. It combines with role, partner,
-domain, search, and assignment-date filters in Domains, Teams, and People. On a
-domain homepage, the Skills picker narrows people independently of directory role
-and partner filters. Clear skills to restore all assignments. Open positions and
-team-only allocations are not people and do not match skill filters.
-When filtering Teams by skills, matching people without a team appear under
+The organization Skills and Focus area pickers support multiple selections using
+**OR** matching within each picker: Vue + Craft CMS shows people with either skill,
+and Frontend + Backend shows people with either recorded work focus. Focus area
+offers Frontend, Backend, and Full-stack, using the existing People Profiles data.
+When both pickers are used, people must match a selected skill and a selected focus
+area. They combine with role, partner, domain, search, and assignment-date filters
+in Domains, Teams, and People. On a domain homepage, both pickers narrow people
+independently of directory role and partner filters. Clear both pickers to restore
+all assignments. Open positions and team-only allocations do not match these filters.
+When filtering Teams by skills or focus area, matching people without a team appear under
 **No team recorded**, and matching person roles are not restricted to engineers.
 
 Click a person's name to open a shareable profile at
