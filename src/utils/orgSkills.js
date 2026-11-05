@@ -48,7 +48,7 @@ export function enrichOrgPerson(person, source) {
 }
 
 export function matchesOrgSkills(row, selectedSkills, personSkills) {
-  return !selectedSkills.length || Boolean(row.personName && selectedSkills.every((skillId) =>
+  return !selectedSkills.length || Boolean(row.personName && selectedSkills.some((skillId) =>
     personSkills.some((link) => link.personId === personKey(row) && link.skillId === skillId)));
 }
 

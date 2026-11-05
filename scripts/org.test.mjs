@@ -29,7 +29,7 @@ const skillData = {
   personSkills: [{ personId: "p1", skillId: "vue" }, { personId: "p1", skillId: "craft" }, { personId: "p2", skillId: "vue" }],
 };
 
-test("skills use AND matching across assignments without duplicate people or implicit team matches", () => {
+test("skills use OR matching across assignments without duplicate people or implicit team matches", () => {
   const model = commandModel([
     assignment(), assignment({ id: "other-domain", domain: "freecme" }),
     assignment({ id: "other-person", personId: "p2", personName: "Second Person" }),
@@ -42,11 +42,44 @@ test("skills use AND matching across assignments without duplicate people or imp
   assert.equal(model.people[0].githubUsername, "example-dev");
   assert.equal(filterOrgRows(model.filled, {}, model.personSkills).length, 4);
   assert.equal(filterOrgRows(model.filled, { skills: ["vue"] }, model.personSkills).length, 3);
-  assert.equal(filterOrgRows(model.filled, { skills: ["vue", "craft"] }, model.personSkills).length, 2);
+  assert.equal(filterOrgRows(model.filled, { skills: ["vue", "craft"] }, model.personSkills).length, 3);
+  assert.equal(filterOrgRows(model.filled, { skills: ["craft", "ai"] }, model.personSkills).length, 2);
   assert.equal(filterOrgRows(model.filled, { skills: ["ai"] }, model.personSkills).length, 0);
   assert.equal(filterOrgRows(model.open, { skills: ["vue"] }, model.personSkills).length, 0);
   assert.equal(filterOrgRows(model.filled, { skills: ["craft"], domain: "freecme", role: "Engineer", organization: "Relias" }, model.personSkills).length, 1);
   assert.equal(model.skills.find((s) => s.id === "ai").name, "AI");
+});
+
+test("focus areas use OR matching and combine with skills and existing filters", () => {
+  const model = commandModel([
+    assignment(), assignment({ id: "other-domain", domain: "freecme" }),
+    assignment({ id: "p2", personId: "p2", personName: "Backend Person", team: "" }),
+    assignment({ id: "p3", personId: "p3", personName: "Full-stack Person" }),
+    assignment({ id: "p4", personId: "p4", personName: "Unknown Person" }),
+    assignment({ id: "p5", personId: "p5", personName: "QA Person", role: "QA" }),
+    assignment({ id: "open", personId: "", personName: "", status: "Open" }),
+    assignment({ id: "team", personId: "", personName: "", role: "Team & Partners" }),
+    assignment({ id: "none", personId: "", personName: "", role: "UX", team: "", organization: "", status: "Not applicable" }),
+  ], {
+    ...skillData,
+    profiles: [...skillData.profiles, { personId: "p2", workFocus: "Backend", githubUsername: "" },
+      { personId: "p3", workFocus: "Full-stack", githubUsername: "" },
+      { personId: "p5", workFocus: "QA automation", githubUsername: "" }],
+  });
+  const filter = (filters, rows = [...model.filled, ...model.notApplicable]) =>
+    filterOrgRows(rows, filters, model.personSkills, model.profiles);
+  assert.equal(filter({}).length, 8);
+  assert.equal(filter({ focusAreas: ["Frontend"] }).length, 2);
+  assert.equal(filter({ focusAreas: ["Frontend", "Backend"] }).length, 3);
+  assert.equal(filter({ focusAreas: ["Full-stack"] })[0].personId, "p3");
+  assert.equal(filter({ focusAreas: ["Frontend", "Backend", "Full-stack"] }).length, 4);
+  assert.equal(filter({ focusAreas: ["Frontend", "Backend"], skills: ["craft", "ai"] }).length, 2);
+  assert.equal(filter({ focusAreas: ["Backend", "Full-stack"], skills: ["vue", "craft"] })[0].personId, "p2");
+  assert.equal(filter({ focusAreas: ["Frontend", "Backend"], domain: "freecme", role: "Engineer", organization: "Relias" }).length, 1);
+  assert.equal(filter({ focusAreas: ["Frontend"], role: "QA" }).length, 0);
+  assert.equal(filter({ focusAreas: ["Frontend"] }, model.open).length, 0);
+  assert.equal(filterOrgRows(model.filled, { focusAreas: ["Frontend"] }).length, 0);
+  assert.equal(filter({ focusAreas: [] }).length, 8);
 });
 
 test("profile data is separate from date-scoped assignments, missing metadata and same-name people stay distinct", () => {

@@ -16,6 +16,7 @@ const TABS = [
   ["people", "People"],
   ["gaps", "Open roles & flags"],
 ];
+const FOCUS_AREAS = ["Frontend", "Backend", "Full-stack"].map((name) => ({ id: name, name }));
 const EMPTY_ASSIGNMENT = { domain: "", personId: "", personName: "", role: "Engineer", team: "", organization: "Relias", status: "Assigned", notes: "", startDate: "", endDate: "" };
 const today = () => {
   const date = new Date();
@@ -176,7 +177,7 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
   const model = useMemo(() => buildOrganization(data, allAssignments ? "" : asOf), [data, allAssignments, asOf]);
   const [tab, setTab] = useState("domains");
   const [group, setGroup] = useState("domain");
-  const [filters, setFilters] = useState({ query: "", domain: "", organization: "", role: "", skills: [] });
+  const [filters, setFilters] = useState({ query: "", domain: "", organization: "", role: "", skills: [], focusAreas: [] });
   const [focusedPerson, setFocusedPerson] = useState("");
   const [modal, setModal] = useState(null);
   const [token, setToken] = useState("");
@@ -194,17 +195,17 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
   }, [domainId, personId]);
   const ready = Boolean(data.org?.configured);
   const sheetUrl = getGoogleSheetUrl();
-  const rows = filterOrgRows([...model.filled, ...model.notApplicable], filters, model.personSkills);
-  const skillFiltersActive = filters.skills.length > 0;
+  const rows = filterOrgRows([...model.filled, ...model.notApplicable], filters, model.personSkills, model.profiles);
+  const skillFiltersActive = filters.skills.length > 0 || filters.focusAreas.length > 0;
   const skillsSupported = Boolean(data.org?.skillsSupported);
-  const domainModel = skillFiltersActive ? { ...model, filled: filterOrgRows(model.filled, { skills: filters.skills }, model.personSkills), notApplicable: [], open: [] } : model;
+  const domainModel = skillFiltersActive ? { ...model, filled: filterOrgRows(model.filled, { skills: filters.skills, focusAreas: filters.focusAreas }, model.personSkills, model.profiles), notApplicable: [], open: [] } : model;
   const personHref = (row) => buildHash("org", ["person", personKey(row), allAssignments ? "all" : asOf]);
   const personLink = (row, label = row.personName) => <a className="org-link org-badge" style={{ "--org-color": organizationColor(row.organization, model.organizations) }} href={personHref(row)} onClick={() => setPersonBack(window.location.hash)}>{label}</a>;
   const assignedPeople = new Set(rows.filter((row) => row.personName).map(personKey));
   const people = model.people.filter((person) => (!focusedPerson || person.key === focusedPerson) &&
     person.assignments.some((row) => rows.some((match) => match.id === row.id)));
   const setFilter = (key, value) => { setFilters((previous) => ({ ...previous, [key]: value })); setFocusedPerson(""); };
-  const reset = () => { setFilters({ query: "", domain: "", organization: "", role: "", skills: [] }); setFocusedPerson(""); };
+  const reset = () => { setFilters({ query: "", domain: "", organization: "", role: "", skills: [], focusAreas: [] }); setFocusedPerson(""); };
   const focusTeamOrPartner = (item) => {
     setFilters((previous) => ({ ...previous, query: item.kind === "team" ? item.label : "", domain: "", organization: item.kind === "partner" ? item.organization : "", role: "" })); setFocusedPerson(""); setTab("teams");
   };
@@ -295,7 +296,7 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
   const unteamedPeople = skillFiltersActive ? rows.filter((row) => row.personName && !row.team) : [];
   const vacantTeams = model.teams.filter((team) => !model.filled.some((row) => row.team === team.id) && !filters.domain && !filters.organization && !filters.role && !skillFiltersActive &&
     (!filters.query || orgKey(team.label).includes(orgKey(filters.query))));
-  const open = filterOrgRows(model.open, filters, model.personSkills);
+  const open = filterOrgRows(model.open, filters, model.personSkills, model.profiles);
   const gaps = model.gaps.filter(({ domain, category }) => !skillFiltersActive && (!filters.domain || domain.id === filters.domain) &&
     (!filters.query || orgKey(`${domain.name} ${category}`).includes(orgKey(filters.query))));
   return (
@@ -339,7 +340,8 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         onSaveSkill={(entry) => saveSkills(saveOrgSkill, entry)} onDeleteSkill={(entry) => saveSkills(deleteOrgSkill, entry)} /> : domainId ? <>
         {dateScope && dateScope !== "all" && !validOrgDate(dateScope) ? <p role="alert" className="org-callout">The link has an invalid date scope. Showing today instead; choose a date above.</p> : null}
         <OrgSkillPicker skills={model.skills} value={filters.skills} onChange={(value) => setFilter("skills", value)} disabled={!skillsSupported} />
-        {skillFiltersActive ? <p>Showing people with all selected skills. Clear skills to see all domain assignments.</p> : null}
+        <OrgSkillPicker label="Focus area" placeholder="Choose focus areas" skills={FOCUS_AREAS} value={filters.focusAreas} onChange={(value) => setFilter("focusAreas", value)} disabled={!skillsSupported} />
+        {skillFiltersActive ? <p>Matches any selected skill and any selected focus area. Clear both filters to see all domain assignments.</p> : null}
         {ready ? <OrgDomainDetail model={domainModel} domainId={domainId} personLink={personLink} skillsFiltered={skillFiltersActive} canEdit={adminUnlocked} onEdit={(row) => setModal({ kind: "assignment", entry: row })} /> : null}
       </> : <>
       <div className="org-toolbar" role="group" aria-label="Organization filters">
@@ -348,9 +350,10 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
         <Field label="Organization / partner"><select value={filters.organization} onChange={(e) => setFilter("organization", e.target.value)}><option value="">All organizations</option>{model.organizations.map((item) => <option key={item.name}>{item.name}</option>)}</select></Field>
         <Field label="Role"><select value={filters.role} onChange={(e) => setFilter("role", e.target.value)}><option value="">All roles</option>{model.roles.map((item) => <option key={item.name}>{item.name}</option>)}</select></Field>
         <OrgSkillPicker skills={model.skills} value={filters.skills} onChange={(value) => setFilter("skills", value)} disabled={!skillsSupported} />
+        <OrgSkillPicker label="Focus area" placeholder="Choose focus areas" skills={FOCUS_AREAS} value={filters.focusAreas} onChange={(value) => setFilter("focusAreas", value)} disabled={!skillsSupported} />
         <button type="button" onClick={reset}>Clear filters</button>
       </div>
-      {skillFiltersActive ? <p role="status">Showing people with all selected skills. Open positions and team-only allocations are not skill matches.</p> : null}
+      {skillFiltersActive ? <p role="status">Matches any selected skill and any selected focus area. Open positions and team-only allocations do not match these filters.</p> : null}
       {!isLocalMode() && ready && !data.org?.assignmentDatesSupported ? <p className="org-callout">The connected API needs a one-time update to support dates. Once updated, Save manages the worksheet automatically—no setup scripts required.</p> : null}
       <div className="org-legend" aria-label="Organization colors">
         {model.organizations.map((item) => badge(item.name, item.name, () => setFilter("organization", item.name)))}

@@ -1,8 +1,8 @@
-export default function OrgSkillPicker({ skills, value, onChange, disabled = false, label = "Skills" }) {
+export default function OrgSkillPicker({ skills, value, onChange, disabled = false, label = "Skills", placeholder = "Choose skills" }) {
   return <div className="org-field org-skill-picker">
     <span>{label}</span>
     <details>
-      <summary aria-disabled={disabled}>{value.length ? `${value.length} selected: ${skills.filter((s) => value.includes(s.id)).map((s) => s.name).join(", ")}` : "Choose skills"}</summary>
+      <summary aria-disabled={disabled}>{value.length ? `${value.length} selected: ${skills.filter((s) => value.includes(s.id)).map((s) => s.name).join(", ")}` : placeholder}</summary>
       <fieldset disabled={disabled}>
         <legend className="org-sr-only">{label}</legend>
         {skills.map((skill) => <label key={skill.id}><input type="checkbox" checked={value.includes(skill.id)}
