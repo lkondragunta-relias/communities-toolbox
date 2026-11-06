@@ -28,6 +28,7 @@ Interactive product roadmap viewer built with React and Vite. Initiative data li
   - [Using the view](#using-the-view)
 - [Communities Eng & Product Organization](#communities-eng--product-organization)
 - [Feedback collection](#feedback-collection)
+- [Repository skills](#repository-skills)
 - [Adding a cohort (step-by-step)](#adding-a-cohort-step-by-step)
   - [Overview](#overview)
   - [Step 1 — Define the cohort in the app](#step-1--define-the-cohort-in-the-app)
@@ -90,7 +91,9 @@ their existing token; feedback never sends that token.
 2. Save the updated source and run **setupFeedbackSheet**. It creates only the
    exact **Feedback** tab and leaves other tabs and existing feedback unchanged.
    Its headers are **ID, Submitted At, Name, Category, Page, Page URL, Message,
-   Status, Request ID, Request Fingerprint**. Do not reorder these headers.
+   Status, Request ID, Request Fingerprint, Issue URL, PR URL, Updated At**.
+   Do not reorder the first ten headers. The tracking columns are located by
+   header name and appended safely after existing extra columns.
    Setup also runs automatically on the first valid submission.
 3. Use **Deploy > Manage deployments > Edit > New version > Deploy** on the
    existing Web App. Preserve its `/exec` URL and execute-as/access settings.
@@ -114,8 +117,59 @@ or unknown responses. There is no remote-to-local fallback.
 Local mode uses an independent IndexedDB feedback table with the same validation,
 receipt and deduplication contract. The dialog labels local saves as browser-only.
 Run `npm run test:feedback` for backend, API and keyboard/browser coverage.
-Public unauthenticated append-only access is not spam prevention. This version
-does not add automation, triage, notifications, or bug-to-PR execution.
+Public unauthenticated append-only access is not spam prevention.
+
+### Feedback tracking API
+
+Run **setupFeedbackSheet** again after applying the reviewed backend update.
+It preserves existing rows/tabs, adds missing **Issue URL**, **PR URL**, and
+**Updated At** columns, and initializes blank legacy statuses to **New**.
+It does not overwrite extra columns. Unknown statuses or duplicate tracking
+headers are reported instead of silently reset. Publish a new version of the
+existing Web App deployment, preserving its URL, live-only code and properties.
+
+The existing protected POST API adds two admin-token-authenticated actions:
+
+| Action | Payload fields beyond action/adminToken | Result |
+|---|---|---|
+| `listFeedback` | Optional `status`, one exact status below | `{ok:true, feedback:[...]}` |
+| `updateFeedback` | `id`, at least one of `status`, `issueUrl`, `prUrl`; optional `expectedUpdatedAt` | `{ok:true, feedback:{...}}` |
+
+Statuses are **New, Issue created, In progress, In review, Done, Declined,
+Needs info, Needs approval**. Updates change only tracking fields and set a
+server **Updated At** timestamp. Pass the last returned `updatedAt` as
+`expectedUpdatedAt` to reject concurrent changes. URLs must be canonical issues
+or PRs in `lkondragunta-relias/communities-toolbox`; an explicit empty string
+clears a URL. Duplicate IDs, unknown fields, invalid statuses, forged links,
+and missing authentication are rejected. The admin list does not expose
+deduplication fingerprints. Public GET still excludes all feedback.
+
+## Repository skills
+
+| Skill | Version | Purpose |
+|---|---|---|
+| [feedback-pipeline](.github/skills/feedback-pipeline/SKILL.md) | V1.0 | Daily Project-led feedback triage, deduplicated GitHub issues, local fix sessions and PRs, approval-only data corrections, and sheet status sync. |
+
+The skill is a reviewed instruction set for the owning Project coordinator.
+It does not create a schedule automatically. The agreed run is daily at 8 AM
+local time, with no daily item cap. Each actionable code issue gets a separate
+local session and PR; the user reviews and merges. Data corrections require
+explicit confirmation in the coordinator conversation before protected edits.
+The future frontend tracking UI is not part of this change.
+
+Its self-contained Node 22 API helper has no external runtime packages. It uses
+`OPS_SHEETS_ADMIN_TOKEN` when set, otherwise the existing macOS Keychain service
+`communities-operations-sync` with account `$USER`. It never logs the credential.
+Configure the confirmed main endpoint through `FEEDBACK_API_URL` or version-1
+`~/.local/state/communities-operations-sync/main-daily/runtime.json`.
+The helper accepts only the main deployment and supports `list [status]` or
+`update` with JSON on stdin, verifying a fresh readback after tracking writes.
+
+Use `npm run test:feedback-pipeline` for helper safety/contract tests,
+`npm run test:skill-frontmatter` for frontmatter policy tests, and
+`npm run validate:skill-frontmatter` to parse all repository skills with a
+real YAML parser. The YAML package is development-only; the daily helper
+requires no package installation.
 
 ## Communities Eng & Product Organization
 
