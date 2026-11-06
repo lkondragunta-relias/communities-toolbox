@@ -3,6 +3,7 @@ import { ROUTES } from "./navigation.js";
 export const FEEDBACK_CATEGORIES = [
   "Report a bug",
   "Request a feature",
+  "Request a change",
   "Share feedback",
   "Report a data correction",
 ];

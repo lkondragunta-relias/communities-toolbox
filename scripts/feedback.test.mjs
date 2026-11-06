@@ -212,7 +212,8 @@ test("widget opens on every internal route, defaults current page, preserves dra
     await page.getByRole("button", { name: "Send feedback", exact: true }).click();
     await fill(page);
     await page.getByLabel("Page", { exact: true }).selectOption("incidents");
-    await page.getByLabel("What would you like to share?").selectOption("Report a bug");
+    assert.deepEqual(await page.locator("#feedback-category option").allTextContents(), FEEDBACK_CATEGORIES);
+    await page.getByLabel("What would you like to share?").selectOption("Request a change");
     await page.getByRole("button", { name: "Close feedback", exact: true }).click();
     await page.getByRole("button", { name: "Send feedback", exact: true }).click();
     assert.equal(await page.getByLabel("Message (required)").inputValue(), "Synthetic browser feedback");
@@ -222,7 +223,7 @@ test("widget opens on every internal route, defaults current page, preserves dra
     const rows = await page.evaluate(async () => (await import("/src/db/database.js")).db.feedback.toArray());
     assert.equal(rows.length, 1);
     assert.equal(rows[0].page, "incidents");
-    assert.equal(rows[0].category, "Report a bug");
+    assert.equal(rows[0].category, "Request a change");
     const data = await page.evaluate(async () => (await import("/src/db/database.js")).getRoadmap());
     assert.equal("feedback" in data, false);
     const again = await page.evaluate(async (row) => {

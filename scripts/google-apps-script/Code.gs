@@ -128,7 +128,7 @@ function getAdminToken_() {
 
 /* ============================ Feedback writes ============================= */
 
-var FEEDBACK_CATEGORIES = ['Report a bug', 'Request a feature', 'Share feedback', 'Report a data correction'];
+var FEEDBACK_CATEGORIES = ['Report a bug', 'Request a feature', 'Request a change', 'Share feedback', 'Report a data correction'];
 var FEEDBACK_PAGES = {
   overview: 'overview', timeline: 'roadmap', table: 'projects', incidents: 'operations',
   sites: 'cookiebot', org: 'prod-eng-org', settings: 'settings',

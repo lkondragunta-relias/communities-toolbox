@@ -64,9 +64,11 @@ The page title and cohort filter labels are defined in the app (`src/config/road
 The circular **Feedback** button is available on every internal page, including
 Projects and presentation mode. External sites opened from the sidebar do not
 receive it. The dialog asks for a required name and message, one of **Report a
-bug**, **Request a feature**, **Share feedback**, or **Report a data correction**,
+bug**, **Request a feature**, **Request a change**, **Share feedback**, or **Report a data correction**,
 and an editable page selection that starts on the current page. There is no
 email field, upload, or extra admin unlock.
+Use **Request a change** for something you want changed in the existing Toolbox,
+rather than a bug, a new feature, or general feedback.
 On the organization page, **Edit with chat** sits beside Feedback, and its
 expanded assistant panel stays above both buttons on desktop and mobile.
 
