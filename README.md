@@ -369,6 +369,14 @@ the intended workbook connection; local `.env` values are not deployed.
 
 ## How it works
 
+Roadmap team filters dim every nonmatching timeline card, including Done cards
+and their checkmarks, while preserving the timeline layout. Shared cards match
+any of their assigned teams. All teams restores normal status and confidence
+styling; the board and list continue to hide nonmatching cards.
+
+Rendered roadmap regression checks: `npx playwright install chromium`, then
+`npm run test:roadmap`.
+
 ```mermaid
 flowchart LR
   Browser[React app] -->|GET /exec| GAS[Apps Script Web App]

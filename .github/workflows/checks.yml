@@ -18,4 +18,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node --test scripts/org.test.mjs
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:roadmap
       - run: npm run build

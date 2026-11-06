@@ -720,12 +720,6 @@ body {
     background 0.2s ease;
 }
 
-.initiative--dimmed {
-  background: color-mix(in srgb, var(--accent, #3b82f6) 8%, var(--bg));
-  color: color-mix(in srgb, var(--text) 35%, var(--bg));
-  border: none;
-}
-
 .initiative--matched {
   opacity: 1;
   border: 2px solid var(--accent, #3b82f6);
@@ -4151,6 +4145,15 @@ html[data-theme="dark"] .confidence-badge--likely { border-color: var(--tone-inf
 }
 .initiative--clip-start { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-style: dotted; }
 .initiative--clip-end { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-style: dotted; }
+
+/* Filter mismatches take precedence over status and confidence, including the done toggle. */
+.initiative.initiative--dimmed {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 8%, var(--bg));
+  color: color-mix(in srgb, var(--text) 35%, var(--bg));
+  border: none;
+  opacity: 0.35;
+  filter: grayscale(1);
+}
 
 /* ---------- Timeline: row labels, current quarter, today line ---------- */
 .roadmap__row-label { flex-direction: column; gap: 4px; }
