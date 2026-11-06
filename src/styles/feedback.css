@@ -1,0 +1,127 @@
+.feedback-trigger {
+  position: fixed;
+  right: max(var(--sp-5), env(safe-area-inset-right));
+  bottom: max(var(--sp-5), env(safe-area-inset-bottom));
+  z-index: 40;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--primary-btn-text);
+  box-shadow: 0 4px 20px var(--shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-micro);
+  font-weight: 600;
+}
+.feedback-trigger:hover { background: var(--accent-text); color: var(--bg); }
+.feedback-trigger:focus-visible, .feedback-panel :focus-visible {
+  outline: 3px solid var(--accent-text);
+  outline-offset: 3px;
+}
+.app__content { padding-bottom: 112px; }
+.feedback-panel {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+  padding: 0;
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  border: 1px solid var(--border);
+  border-radius: var(--r-panel);
+  background: var(--bg-elevated);
+  color: var(--text);
+  box-shadow: 0 12px 48px var(--shadow);
+  overflow: auto;
+}
+.feedback-panel::backdrop { background: var(--overlay); }
+.feedback-panel__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-3);
+  padding: var(--sp-5);
+  border-bottom: 1px solid var(--border);
+}
+.feedback-panel__mark {
+  padding: var(--sp-2);
+  border-radius: var(--r-panel);
+  background: var(--surface-active);
+  color: var(--accent-text);
+}
+.feedback-panel h2 { margin: 0 0 var(--sp-2); font-size: var(--t-page); }
+.feedback-panel p { margin: 0; line-height: 1.5; }
+.feedback-panel__header p, .feedback-panel footer p {
+  color: var(--text-muted);
+  font-size: var(--t-meta);
+}
+.feedback-panel__close {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.feedback-panel__form, .feedback-panel__success { padding: var(--sp-5); }
+.feedback-panel fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.feedback-panel label {
+  display: block;
+  font-size: var(--t-body);
+  font-weight: 600;
+  margin-bottom: var(--sp-2);
+}
+.feedback-panel label span { color: var(--text-muted); font-size: var(--t-meta); font-weight: 400; }
+.feedback-panel input, .feedback-panel select, .feedback-panel textarea {
+  width: 100%;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: var(--sp-3);
+  border: 1px solid var(--border-hover);
+  border-radius: var(--r-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.feedback-panel textarea { resize: vertical; }
+.feedback-panel__row { display: grid; grid-template-columns: 1.2fr 1fr; gap: var(--sp-3); margin: var(--sp-4) 0; }
+.feedback-panel__row > div { min-width: 0; }
+.feedback-panel__count { text-align: right; color: var(--text-muted); font-size: var(--t-meta); }
+.feedback-panel__status { margin-top: var(--sp-3); font-size: var(--t-body); }
+.feedback-panel__error { color: var(--error); }
+.feedback-panel footer { display: flex; gap: var(--sp-4); align-items: center; justify-content: space-between; margin-top: var(--sp-5); }
+.feedback-panel__send {
+  display: inline-flex;
+  gap: var(--sp-2);
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  flex-shrink: 0;
+  padding: var(--sp-3) var(--sp-5);
+  border: 0;
+  border-radius: var(--r-control);
+  background: var(--accent);
+  color: var(--primary-btn-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.feedback-panel__send:disabled { opacity: 0.6; cursor: not-allowed; }
+.feedback-panel__success p { margin-bottom: var(--sp-5); color: var(--success); }
+@media (max-width: 560px) {
+  .feedback-trigger { width: 64px; height: 64px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); }
+  .feedback-panel__row { grid-template-columns: 1fr; }
+  .feedback-panel input, .feedback-panel select, .feedback-panel textarea { font-size: 16px; }
+}
+@media print { .feedback-trigger, .feedback-panel { display: none; } }

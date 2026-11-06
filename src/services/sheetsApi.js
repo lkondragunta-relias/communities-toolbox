@@ -3,6 +3,7 @@ import { resolvePriorityDefinitions, getValidPriorityLabels } from "../config/pr
 import { getValidConfidenceLabels } from "../config/confidenceConfig";
 import { ROADMAP_DEFAULTS } from "../config/roadmapDefaults";
 import { getRoadmap as getLocalRoadmap, postToLocal } from "../db/database";
+import { validateFeedback, validateFeedbackReceipt } from "../config/feedbackConfig.js";
 
 function getApiUrl() {
   const url = import.meta.env.VITE_SHEETS_API_URL;
@@ -181,6 +182,41 @@ export async function fetchRoadmap() {
     throw new Error(payload.error);
   }
   return mergeRoadmapData(normalizeRemotePayload(payload));
+}
+
+export async function checkFeedbackSupport() {
+  if (isLocal()) return true;
+  const apiUrl = getApiUrl();
+  if (!apiUrl) throw new Error("Feedback is unavailable because the Sheets API is not configured.");
+  const url = new URL(apiUrl);
+  url.searchParams.set("action", "feedbackCapabilities");
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  const result = await parseJsonResponse(response);
+  if (result?.ok !== true || result.feedbackVersion !== 1) {
+    throw new Error("Feedback is not available yet. The Google backend needs its feedback update.");
+  }
+  return true;
+}
+
+export async function submitFeedback(payload) {
+  const input = validateFeedback(payload);
+  const body = { ...input, action: "submitFeedback" };
+  let result;
+  if (isLocal()) {
+    result = await postToLocal(body);
+  } else {
+    const apiUrl = getApiUrl();
+    if (!apiUrl) throw new Error("Feedback is unavailable because the Sheets API is not configured.");
+    const response = await fetch(apiUrl, {
+      method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(35000),
+    });
+    result = await parseJsonResponse(response);
+    if (result?.ok === false || result?.error) {
+      throw new Error(result.error || "Feedback could not be saved.");
+    }
+  }
+  return validateFeedbackReceipt(result, input.requestId);
 }
 
 async function postToSheetsApi(payload) {

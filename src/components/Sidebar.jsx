@@ -1,21 +1,6 @@
 import { ROADMAP_TITLE } from "../config/roadmapDefaults";
 import Icon from "./Icon";
-
-const NAV = [
-  { id: "overview", label: "Overview", icon: "overview" },
-  { id: "timeline", label: "Roadmap", icon: "roadmap" },
-  // { id: "table", label: "Projects" }, // hidden for now
-  { id: "incidents", label: "Operations", icon: "operations" },
-  { id: "sites", label: "Cookiebot", icon: "cookiebot" },
-  { id: "org", label: "Prod & Eng Org", icon: "organization" },
-  {
-    id: "accessibility",
-    label: "Accessibility",
-    icon: "accessibility",
-    href: "https://a11y-monitor-seven.vercel.app/dashboard",
-  },
-  { id: "settings", label: "Settings", icon: "settings" },
-];
+import { NAVIGATION } from "../config/navigation.js";
 
 export default function Sidebar({ view, onNavigate, collapsed = false, onToggleCollapse }) {
   return (
@@ -26,7 +11,7 @@ export default function Sidebar({ view, onNavigate, collapsed = false, onToggleC
       </div>
 
       <nav className="sidebar__nav" aria-label="Primary">
-        {NAV.map((item) =>
+        {NAVIGATION.map((item) =>
           item.href ? (
             <a
               key={item.id}

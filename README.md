@@ -27,6 +27,7 @@ Interactive product roadmap viewer built with React and Vite. Initiative data li
   - [How the dashboard reads a row](#how-the-dashboard-reads-a-row)
   - [Using the view](#using-the-view)
 - [Communities Eng & Product Organization](#communities-eng--product-organization)
+- [Feedback collection](#feedback-collection)
 - [Adding a cohort (step-by-step)](#adding-a-cohort-step-by-step)
   - [Overview](#overview)
   - [Step 1 — Define the cohort in the app](#step-1--define-the-cohort-in-the-app)
@@ -57,6 +58,60 @@ window, sized by how long it actually lasted. See
 The page title and cohort filter labels are defined in the app (`src/config/roadmapDefaults.js`), not in the spreadsheet. Team tabs and initiative rows come entirely from Google Sheets.
 
 **Stack:** React 19, Vite 8, Google Apps Script (backend), GitHub Pages (optional deployment).
+
+## Feedback collection
+
+The circular **Feedback** button is available on every internal page, including
+Projects and presentation mode. External sites opened from the sidebar do not
+receive it. The dialog asks for a required name and message, one of **Report a
+bug**, **Request a feature**, **Share feedback**, or **Report a data correction**,
+and an editable page selection that starts on the current page. There is no
+email field, upload, or extra admin unlock.
+
+Feedback is append-only and is never included in the public roadmap GET.
+The dedicated `submitFeedback` action accepts only `action`, `requestId`, `name`,
+`category`, `page`, and `message`. Names are limited to 100 characters and
+messages to 5,000; whitespace-only values and control characters are rejected.
+The server controls the row ID, timestamp, canonical page URL, and `New` status.
+Spreadsheet formula prefixes are escaped. Existing admin actions still require
+their existing token; feedback never sends that token.
+
+### Deploying the feedback backend
+
+1. Open the **existing main spreadsheet**, then **Extensions > Apps Script**.
+   Read and reconcile the live source with `scripts/google-apps-script/Code.gs`
+   before applying changes. Do not overwrite live-only changes or Script
+   Properties. Google sheet edit access and bound script edit/deploy access are
+   required; an API admin token is not Apps Script deployment authorization.
+2. Save the updated source and run **setupFeedbackSheet**. It creates only the
+   exact **Feedback** tab and leaves other tabs and existing feedback unchanged.
+   Its headers are **ID, Submitted At, Name, Category, Page, Page URL, Message,
+   Status, Request ID, Request Fingerprint**. Do not reorder these headers.
+   Setup also runs automatically on the first valid submission.
+3. Use **Deploy > Manage deployments > Edit > New version > Deploy** on the
+   existing Web App. Preserve its `/exec` URL and execute-as/access settings.
+   The web app must allow submission requests from site users without a Google
+   sign-in. Do not change admin authentication or Script Properties.
+4. Check `GET <existing-exec-url>?action=feedbackCapabilities` returns exactly
+   `{ "ok": true, "feedbackVersion": 1 }`. The frontend disables Send and shows
+   an unavailable message against older or unreachable backends.
+5. Publish the frontend using the existing Pages workflow. Submit one clearly
+   labeled synthetic verification message and confirm its returned `FB-...`
+   ID exists in the main sheet's Feedback tab.
+
+Writes are serialized by the script lock. A UUID request ID and stored payload
+fingerprint make repeated submissions return the same saved receipt without
+appending duplicates. On an uncertain failure, the dialog keeps the original
+draft locked for retry with the same ID, including after closing and reopening.
+Reloading the page discards the in-memory draft, so retry before reloading.
+Success is shown only for a valid saved receipt, never for HTTP 200 JSON errors
+or unknown responses. There is no remote-to-local fallback.
+
+Local mode uses an independent IndexedDB feedback table with the same validation,
+receipt and deduplication contract. The dialog labels local saves as browser-only.
+Run `npm run test:feedback` for backend, API and keyboard/browser coverage.
+Public unauthenticated append-only access is not spam prevention. This version
+does not add automation, triage, notifications, or bug-to-PR execution.
 
 ## Communities Eng & Product Organization
 

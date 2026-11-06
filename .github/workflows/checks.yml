@@ -20,4 +20,5 @@ jobs:
       - run: node --test scripts/org.test.mjs
       - run: npx playwright install --with-deps chromium
       - run: npm run test:roadmap
+      - run: npm run test:feedback
       - run: npm run build

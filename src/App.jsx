@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AdminModal from "./components/AdminModal";
+import FeedbackWidget from "./components/FeedbackWidget";
 import {
   applyAdminTokenFromUrl,
   clearStoredAdminTokens,
@@ -549,6 +550,7 @@ export default function App() {
 
   return (
     <div className={`app${presentMode ? " app--present" : ""}`}>
+      <FeedbackWidget view={view} />
 
       {presentMode ? null : (
         <Sidebar

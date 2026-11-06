@@ -13,6 +13,7 @@ import { DEFAULT_STATUSES } from "../config/statusConfig";
 import { DEFAULT_PRIORITIES } from "../config/priorityConfig";
 import { DEFAULT_ORG_ROLES, DEFAULT_ORGANIZATIONS, ORG_FIELDS, ORG_CATEGORIES, validateOrgAssignment } from "../config/orgConfig.js";
 import { plainSkillText, profileSnapshot, resolveOrgSkills, validatePersonProfile } from "../utils/orgSkills.js";
+import { feedbackPageUrl, validateFeedback } from "../config/feedbackConfig.js";
 
 export const LOCAL_ADMIN_TOKEN =
   (import.meta.env.VITE_LOCAL_ADMIN_TOKEN || "local-dev").trim();
@@ -140,6 +141,27 @@ db.version(11).stores({
   orgSkills: "id, name",
   orgPersonSkills: "[personId+skillId], personId, skillId",
 });
+
+db.version(12).stores({ feedback: "id, &requestId" });
+
+async function addLocalFeedback(payload) {
+  const input = validateFeedback(payload);
+  return db.transaction("rw", db.feedback, async () => {
+    const existing = await db.feedback.where("requestId").equals(input.requestId).first();
+    if (existing) {
+      if (["name", "category", "page", "message"].some((field) => existing[field] !== input[field])) {
+        throw new Error("This request ID already belongs to different feedback.");
+      }
+      return { ok: true, id: existing.id, submittedAt: existing.submittedAt, requestId: input.requestId };
+    }
+    const row = {
+      ...input, id: `FB-${crypto.randomUUID()}`, submittedAt: new Date().toISOString(),
+      pageUrl: feedbackPageUrl(input.page), status: "New",
+    };
+    await db.feedback.add(row);
+    return { ok: true, id: row.id, submittedAt: row.submittedAt, requestId: row.requestId };
+  });
+}
 
 function projectKey(domain, id) {
   return `${String(domain).toLowerCase()}::${String(id)}`;
@@ -574,6 +596,7 @@ async function updateIncidentRow(payload) {
 /** Mirror of the remote POST handler; mutates the DB. (Local mode has no auth.) */
 export async function postToLocal(payload) {
   const action = String(payload.action || "add").trim().toLowerCase();
+  if (action === "submitfeedback") return addLocalFeedback(payload);
   if (["saveorgassignment", "deleteorgassignment", "saveorgrole", "saveorgorganization", "saveorgdomain", "saveorgteam", "deleteorgdomain", "saveorgpersonprofile", "saveorgskill", "deleteorgskill"].includes(action)) {
     return writeLocalOrg(payload);
   }

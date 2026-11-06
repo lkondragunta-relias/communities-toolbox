@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "test:roadmap": "node --test scripts/roadmap.test.mjs",
+    "test:feedback": "node --test scripts/feedback.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

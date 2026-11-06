@@ -42,6 +42,9 @@ var DEFAULT_TEAM_COLORS = [
 
 function doGet(e) {
   try {
+    if (e && e.parameter && e.parameter.action === 'feedbackCapabilities') {
+      return jsonResponse({ ok: true, feedbackVersion: 1 });
+    }
     return jsonResponse(readRoadmap_());
   } catch (err) {
     return jsonResponse({ error: String(err && err.message || err) }, 500);
@@ -52,17 +55,24 @@ function doPost(e) {
   // Serialize writes: without a lock, two concurrent adds can both pass the
   // duplicate-ID check and both append.
   var lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  var acquired = false;
   try {
+    lock.waitLock(20000);
+    acquired = true;
     return doPostLocked_(e);
+  } catch (err) {
+    return jsonResponse({ ok: false, error: 'The server is busy. Retry the same request.' }, 503);
   } finally {
-    lock.releaseLock();
+    if (acquired) lock.releaseLock();
   }
 }
 
 function doPostLocked_(e) {
   try {
     var body = parsePostBody_(e);
+    if (body && body.action === 'submitFeedback') {
+      return jsonResponse(submitFeedback_(body));
+    }
     if (!body.adminToken || body.adminToken !== getAdminToken_()) {
       return jsonResponse({ ok: false, error: 'Invalid admin token.' }, 403);
     }
@@ -114,6 +124,103 @@ function doPostLocked_(e) {
 function getAdminToken_() {
   var fromProps = PropertiesService.getScriptProperties().getProperty('ADMIN_TOKEN');
   return fromProps || DEFAULT_ADMIN_TOKEN;
+}
+
+/* ============================ Feedback writes ============================= */
+
+var FEEDBACK_CATEGORIES = ['Report a bug', 'Request a feature', 'Share feedback', 'Report a data correction'];
+var FEEDBACK_PAGES = {
+  overview: 'overview', timeline: 'roadmap', table: 'projects', incidents: 'operations',
+  sites: 'cookiebot', org: 'prod-eng-org', settings: 'settings',
+};
+var FEEDBACK_HEADERS = ['ID', 'Submitted At', 'Name', 'Category', 'Page', 'Page URL', 'Message', 'Status', 'Request ID', 'Request Fingerprint'];
+
+function validateFeedback_(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid feedback.');
+  var allowed = ['action', 'requestId', 'name', 'category', 'page', 'message'];
+  if (Object.keys(body).some(function (key) { return allowed.indexOf(key) < 0; })) {
+    throw new Error('Unexpected feedback field.');
+  }
+  var input = {};
+  ['name', 'message'].forEach(function (field) {
+    var limit = field === 'name' ? 100 : 5000;
+    if (typeof body[field] !== 'string' || !body[field].trim()) {
+      throw new Error(field === 'name' ? 'Please enter your name.' : 'Please enter your message.');
+    }
+    if (body[field].length > limit || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(body[field])) {
+      throw new Error('Invalid ' + field + '. Maximum ' + limit + ' characters.');
+    }
+    input[field] = body[field].trim();
+  });
+  if (typeof body.category !== 'string' || FEEDBACK_CATEGORIES.indexOf(body.category) < 0) {
+    throw new Error('Choose a feedback category.');
+  }
+  if (typeof body.page !== 'string' || !Object.prototype.hasOwnProperty.call(FEEDBACK_PAGES, body.page)) {
+    throw new Error('Choose an internal page.');
+  }
+  if (typeof body.requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.requestId)) {
+    throw new Error('Invalid feedback request ID.');
+  }
+  input.category = body.category;
+  input.page = body.page;
+  input.requestId = body.requestId.toLowerCase();
+  return input;
+}
+
+function safeFeedbackCell_(text) {
+  return /^[=+\-@'\t\r\n]/.test(text) ? "'" + text : text;
+}
+
+function feedbackSheet_() {
+  var sheet = ss_().getSheetByName('Feedback');
+  if (!sheet) sheet = ss_().insertSheet('Feedback');
+  if (sheet.getLastRow() === 0) {
+    sheet.getRange(1, 1, 1, FEEDBACK_HEADERS.length).setValues([FEEDBACK_HEADERS]);
+    sheet.setFrozenRows(1);
+    sheet.getRange(1, 1, 1, FEEDBACK_HEADERS.length).setFontWeight('bold');
+  }
+  var headers = sheet.getRange(1, 1, 1, FEEDBACK_HEADERS.length).getValues()[0];
+  if (FEEDBACK_HEADERS.some(function (header, index) { return headers[index] !== header; })) {
+    throw new Error('Feedback headers do not match. Ask the sheet owner to check the Feedback tab.');
+  }
+  return sheet;
+}
+
+function setupFeedbackSheet() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try {
+    feedbackSheet_();
+    return { ok: true };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function submitFeedback_(body) {
+  var input = validateFeedback_(body);
+  var fingerprint = Utilities.base64Encode(Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    JSON.stringify([input.name, input.category, input.page, input.message]),
+    Utilities.Charset.UTF_8
+  ));
+  var sheet = feedbackSheet_();
+  var row = findRowByValue_(sheet, 9, input.requestId);
+  if (row >= 2) {
+    var saved = sheet.getRange(row, 1, 1, FEEDBACK_HEADERS.length).getValues()[0];
+    if (saved[9] !== fingerprint) throw new Error('This request ID already belongs to different feedback.');
+    return { ok: true, id: saved[0], submittedAt: String(saved[1]), requestId: input.requestId };
+  }
+  var id = 'FB-' + Utilities.getUuid();
+  var submittedAt = new Date().toISOString();
+  var pageUrl = 'https://lkondragunta-relias.github.io/communities-toolbox/#/' + FEEDBACK_PAGES[input.page];
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, FEEDBACK_HEADERS.length).setNumberFormat('@');
+  sheet.appendRow([
+    id, submittedAt, safeFeedbackCell_(input.name), input.category, input.page, pageUrl,
+    safeFeedbackCell_(input.message), 'New', input.requestId, fingerprint,
+  ]);
+  SpreadsheetApp.flush();
+  return { ok: true, id: id, submittedAt: submittedAt, requestId: input.requestId };
 }
 
 /* ============================== Sheet helpers ============================= */

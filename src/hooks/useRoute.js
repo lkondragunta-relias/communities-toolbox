@@ -10,16 +10,8 @@
  * server-side rewrites. A hash never hits the server.
  */
 import { useCallback, useEffect, useState } from "react";
-
-export const ROUTES = [
-  { id: "overview", path: "overview", title: "Overview" },
-  { id: "timeline", path: "roadmap", title: "Roadmap" },
-  { id: "table", path: "projects", title: "Projects" },
-  { id: "incidents", path: "operations", title: "Communities Operations Timeline" },
-  { id: "sites", path: "cookiebot", title: "Cookiebot" },
-  { id: "org", path: "prod-eng-org", title: "Communities Eng & Product Organization" },
-  { id: "settings", path: "settings", title: "Settings" },
-];
+import { ROUTES } from "../config/navigation.js";
+export { ROUTES } from "../config/navigation.js";
 
 export const DEFAULT_VIEW = "overview";
 const LEGACY_VIEW_KEY = "roadmap_active_view";
