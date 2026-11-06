@@ -604,6 +604,7 @@ On **each** team tab, set **row 1** to these headers (exact names recommended):
 - **Owner** — optional free-text name of the person/team responsible (e.g. `Jane D.`).
 - **Priority** — optional; one of `High`, `Medium`, `Low`. Shown as a color-coded badge and available as a filter.
 - **Link** — optional URL (must start with `http://` or `https://`); rendered as a clickable link in the initiative tooltip.
+- **Progress** — optional whole number from 0 to 100. Set it from **Edit** on any started item (not Done or Future) and the roadmap bar fills with light blue to that percent. Done always shows 100%. The script adds this column on the first save if the sheet does not have it yet.
 
 Headers are matched by name, not position — extra columns can be reordered, but keeping **Teams** in column G is recommended (the team-usage check reads that column directly). Owner/Priority/Link are optional; existing rows left blank simply show nothing for those fields.
 

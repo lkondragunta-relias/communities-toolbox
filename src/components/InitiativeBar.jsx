@@ -4,6 +4,8 @@ import {
   isAtRiskStatus,
   isDoneStatus,
   isItemFilterActive,
+  isProgressTrackable,
+  displayProgress,
   timelinePositionToCss,
 } from "../utils/roadmapUtils";
 import { confidenceClass } from "../config/confidenceConfig";
@@ -36,9 +38,10 @@ export default function InitiativeBar({
     .filter(Boolean)
     .join(" ");
 
+  const progress = isProgressTrackable(item.status) ? displayProgress(item) : 0;
   const description = item.description || "";
   const timeline = formatTimelineRange(item.timeline);
-  const ariaParts = [item.name, timeline, description].filter(Boolean);
+  const ariaParts = [item.name, timeline, progress ? `${progress}% complete` : "", description].filter(Boolean);
   const ariaLabel = ariaParts.join(" — ");
 
   const quarterCount = item.span.quarterCount || 1;
@@ -75,6 +78,14 @@ export default function InitiativeBar({
           : undefined
       }
     >
+      {progress > 0 ? (
+        <span
+          className="initiative__progress"
+          style={{ width: `${progress}%` }}
+          data-progress={progress}
+          aria-hidden="true"
+        />
+      ) : null}
       <DoneToggle item={item} domain={category} onToggle={onToggleDone} size="sm" />
       <span className="initiative__name">{item.name}</span>
     </div>

@@ -11,6 +11,8 @@ import {
   initiativeMatchesFilter,
   isAtRiskStatus,
   isDoneStatus,
+  isProgressTrackable,
+  displayProgress,
   quarterIndex,
   quarterLabel,
   quarterOf,
@@ -46,6 +48,7 @@ function horizonHeading(horizonId, now) {
 function BoardCard({ item, domain, statuses, overdue, canEdit, onSelect, onToggleDone }) {
   const done = isDoneStatus(item.status);
   const risk = isAtRiskStatus(item.status);
+  const progress = isProgressTrackable(item.status) ? displayProgress(item) : 0;
   const status = item.status ? resolveStatus(item.status, statuses) : null;
   const showStatus = status && !done && !/^in progress$|^future$/i.test(item.status);
   const className = [
@@ -94,6 +97,19 @@ function BoardCard({ item, domain, statuses, overdue, canEdit, onSelect, onToggl
         ) : null}
       </div>
       {item.owner ? <div className="board-card__owner">{item.owner}</div> : null}
+      {progress > 0 ? (
+        <div
+          className="board-card__progress"
+          role="progressbar"
+          aria-label="Progress"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progress}
+          title={`${progress}% complete`}
+        >
+          <span className="board-card__progress-fill" style={{ width: `${progress}%` }} />
+        </div>
+      ) : null}
     </div>
   );
 }

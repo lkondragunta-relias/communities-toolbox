@@ -2232,7 +2232,8 @@ html, body, #root { height: 100%; }
 .detail__desc { font-size: var(--t-body); line-height: 1.5; color: var(--text); }
 
 .detail__progress { display: inline-flex; align-items: center; gap: 8px; }
-.detail__progress-bar { display: inline-block; height: 8px; width: 80px; border-radius: 999px; background: var(--accent); }
+.detail__progress-track { display: inline-block; position: relative; height: 8px; width: 96px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, #3b82f6 14%, var(--bg)); }
+.detail__progress-bar { display: block; height: 100%; border-radius: inherit; background: #3b82f6; transition: width 0.3s ease; }
 .detail__progress-text { font-size: var(--t-body); color: var(--text-muted); }
 
 .detail__footer { margin-top: auto; display: flex; gap: 10px; padding: 16px 22px; border-top: 1px solid var(--border); }
@@ -4117,6 +4118,17 @@ html[data-theme="dark"] .confidence-badge--likely { border-color: var(--tone-inf
 /* ---------- Timeline: bars ---------- */
 .initiative { gap: 6px; }
 .initiative__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Progress fill sits behind the toggle and name, left to right across the bar. */
+.initiative__progress {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, #3b82f6 30%, transparent);
+  border-right: 2px solid color-mix(in srgb, #3b82f6 70%, transparent);
+  pointer-events: none;
+  transition: width 0.3s ease;
+}
+.initiative__progress[data-progress="100"] { border-right: none; }
+.initiative > :not(.initiative__progress) { position: relative; }
 .initiative--likely {
   background: color-mix(in srgb, var(--accent, #3b82f6) 9%, var(--bg));
   border: 1.5px solid color-mix(in srgb, var(--accent, #3b82f6) 70%, transparent);
@@ -4355,6 +4367,9 @@ html[data-theme="dark"] .confidence-badge--likely { border-color: var(--tone-inf
   background: color-mix(in srgb, var(--done) 8%, var(--bg-elevated));
 }
 .board-card--done .board-card__name { color: var(--text-muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--done) 60%, transparent); }
+
+.board-card__progress { margin-left: 28px; height: 4px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, #3b82f6 14%, transparent); }
+.board-card__progress-fill { display: block; height: 100%; border-radius: inherit; background: #3b82f6; }
 
 /* ---------- Add / edit form: confidence picker ---------- */
 .admin-confidence { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); }

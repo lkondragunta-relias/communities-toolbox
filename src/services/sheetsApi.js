@@ -3,6 +3,7 @@ import { resolvePriorityDefinitions, getValidPriorityLabels } from "../config/pr
 import { getValidConfidenceLabels } from "../config/confidenceConfig";
 import { ROADMAP_DEFAULTS } from "../config/roadmapDefaults";
 import { getRoadmap as getLocalRoadmap, postToLocal } from "../db/database";
+import { isProgressTrackable, parseProgress } from "../utils/roadmapUtils";
 import { validateFeedback, validateFeedbackReceipt } from "../config/feedbackConfig.js";
 
 function getApiUrl() {
@@ -593,6 +594,10 @@ export function validateInitiativeForm(
 
   if (link && !/^https?:\/\//i.test(link)) {
     errors.link = "Link must start with http:// or https://";
+  }
+
+  if (fields.progress !== undefined && isProgressTrackable(status) && parseProgress(fields.progress) === null) {
+    errors.progress = "Progress must be a whole number from 0 to 100.";
   }
 
   return { errors, valid: Object.keys(errors).length === 0 };

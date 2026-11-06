@@ -8,6 +8,8 @@ import {
   quarterLabel,
   quarterOf,
   quarterStartISO,
+  isProgressTrackable,
+  parseProgress,
 } from "../utils/roadmapUtils";
 import { validateInitiativeForm } from "../services/sheetsApi";
 import { CONFIDENCE_LEVELS, DEFAULT_CONFIDENCE } from "../config/confidenceConfig";
@@ -40,11 +42,17 @@ const EMPTY_FORM = {
   confidence: DEFAULT_CONFIDENCE,
   link: "",
   teams: [],
+  progress: "",
 };
 
 function buildInitialForm(domains, initialValues) {
   if (initialValues) {
-    return { ...EMPTY_FORM, ...initialValues, teams: initialValues.teams || [] };
+    return {
+      ...EMPTY_FORM,
+      ...initialValues,
+      teams: initialValues.teams || [],
+      progress: initialValues.progress == null ? "" : String(initialValues.progress),
+    };
   }
   return { ...EMPTY_FORM, domain: domains[0] || "" };
 }
@@ -141,8 +149,9 @@ export default function AdminModal({
   const handleSubmit = useCallback(
     async (e) => {
       e.preventDefault();
+      const showProgress = isEdit && isProgressTrackable(form.status);
       const { errors, valid } = validateInitiativeForm(
-        form,
+        showProgress ? form : { ...form, progress: undefined },
         validTeamIds,
         validStatusLabels,
         validPriorityLabels
@@ -176,6 +185,8 @@ export default function AdminModal({
         link: form.link.trim(),
         teams: form.teams.join(","),
       };
+      // Only send progress when the field is visible so hidden values never overwrite the sheet.
+      if (showProgress) payload.progress = parseProgress(form.progress);
       // Hand off to the parent for an optimistic apply + background write,
       // then close immediately so the user isn't left waiting on the network.
       onSave?.(payload);
@@ -493,6 +504,29 @@ export default function AdminModal({
                 <span className="admin-field__error">{fieldErrors.status}</span>
               ) : null}
             </label>
+
+            {isEdit && isProgressTrackable(form.status) ? (
+              <label className="admin-field">
+                <span className="admin-field__label">Progress (%)</span>
+                <input
+                  type="number"
+                  className="admin-field__input"
+                  inputMode="numeric"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={form.progress}
+                  onChange={(e) => updateField("progress", e.target.value)}
+                  aria-invalid={fieldErrors.progress ? "true" : undefined}
+                  placeholder="0 to 100"
+                />
+                {fieldErrors.progress ? (
+                  <span className="admin-field__error">{fieldErrors.progress}</span>
+                ) : (
+                  <span className="admin-field__hint-inline">Fills the roadmap bar. Done always shows 100%.</span>
+                )}
+              </label>
+            ) : null}
 
             <label className="admin-field">
               <span className="admin-field__label">Owner (optional)</span>

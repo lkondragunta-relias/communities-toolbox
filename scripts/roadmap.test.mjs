@@ -181,3 +181,82 @@ for (const surface of ["board", "list"]) {
     assert.ok(all.some((name) => name.includes("Unassigned done")));
   });
 }
+
+const progressItem = (id, status, progress) => ({ ...item(id, ["other"], status), progress });
+const progressData = {
+  domains: [{ id: "demo", name: "Demo domain" }],
+  teams: data.teams,
+  demo: [
+    progressItem("Ninety", "In Progress", 90),
+    progressItem("Half at risk", "At Risk", 50),
+    progressItem("Zero", "In Progress", 0),
+    progressItem("Future stale", "Future", 40),
+    progressItem("Done stale", "Done", 10),
+  ],
+};
+
+async function renderProgress(Component) {
+  const markup = renderToStaticMarkup(createElement(Component, {
+    data: progressData, filterState: utils.INITIAL_FILTER_STATE, today,
+    quarters: utils.setQuartersFromData({ quarters: utils.buildFocusQuartersRaw(today) }),
+    onShowTooltip: () => {}, onHideTooltip: () => {},
+  }));
+  await page.setContent(`<html data-theme="light"><head><style>${css}</style></head><body><main>${markup}</main></body></html>`);
+}
+
+const fillRatio = (name, bar, fill) => page.locator(bar).filter({ hasText: new RegExp(`^${name}$|${name}`) }).first()
+  .evaluate((el, fillSel) => {
+    const f = el.querySelector(fillSel);
+    if (!f) return null;
+    const track = fillSel === ".initiative__progress" ? el : f.parentElement;
+    return Math.round((f.getBoundingClientRect().width / track.clientWidth) * 100);
+  }, fill);
+
+test("timeline bars fill with light blue to the saved progress for started work", async () => {
+  await renderProgress(Grid);
+  assert.equal(await fillRatio("Ninety", ".initiative", ".initiative__progress"), 90);
+  assert.equal(await fillRatio("Half at risk", ".initiative", ".initiative__progress"), 50);
+  for (const name of ["Zero", "Future stale", "Done stale"]) {
+    assert.equal(await fillRatio(name, ".initiative", ".initiative__progress"), null, name);
+  }
+  const fill = await page.locator(".initiative__progress").first().evaluate((el) => getComputedStyle(el).backgroundColor);
+  assert.match(fill, /59, 130, 246|0\.231|oklab|color\(srgb 0\.23/, "fill is a light blue tint");
+  const name = await page.locator(".initiative__name", { hasText: "Ninety" }).evaluate((el) => getComputedStyle(el).position);
+  assert.equal(name, "relative", "label stays above the fill");
+});
+
+test("board cards show a progress strip for started work only", async () => {
+  await renderProgress(Board);
+  assert.equal(await fillRatio("Ninety", ".board-card", ".board-card__progress-fill"), 90);
+  assert.equal(await page.locator(".board-card", { hasText: "Ninety" }).locator("[role=progressbar]").getAttribute("aria-valuenow"), "90");
+  for (const name of ["Zero", "Future stale", "Done stale"]) {
+    assert.equal(await fillRatio(name, ".board-card", ".board-card__progress-fill"), null, name);
+  }
+});
+
+test("progress parsing and form validation accept only whole percents 0-100", async () => {
+  for (const [input, expected] of [["90", 90], ["0", 0], ["100", 100], [" 45% ", 45], [7, 7]]) {
+    assert.equal(utils.parseProgress(input), expected, String(input));
+  }
+  for (const input of ["", "101", "-5", "12.5", "abc", null, undefined]) {
+    assert.equal(utils.parseProgress(input), null, String(input));
+  }
+  assert.equal(utils.displayProgress({ status: "Done", progress: 10 }), 100);
+  assert.equal(utils.displayProgress({ status: "In Progress", progress: 250 }), 100);
+  assert.equal(utils.displayProgress({ status: "In Progress" }), 0);
+  assert.equal(utils.isProgressTrackable("In Progress"), true);
+  assert.equal(utils.isProgressTrackable("Close to done"), true);
+  for (const status of ["Done", "Future", ""]) assert.equal(utils.isProgressTrackable(status), false, status);
+
+  const { validateInitiativeForm } = await server.ssrLoadModule("/src/services/sheetsApi.js");
+  const base = {
+    domain: "demo", id: "X1", name: "X", description: "d",
+    timelineStart: "2026-10-01", timelineEnd: "2026-12-31", teams: [],
+  };
+  const check = (fields) => validateInitiativeForm({ ...base, ...fields }, [], [], []).errors.progress;
+  assert.equal(check({ status: "In Progress", progress: "90" }), undefined);
+  assert.match(check({ status: "In Progress", progress: "150" }), /0 to 100/);
+  assert.match(check({ status: "In Progress", progress: "" }), /0 to 100/);
+  assert.equal(check({ status: "Done", progress: "150" }), undefined, "hidden field is not validated");
+  assert.equal(check({ status: "In Progress" }), undefined, "omitted progress keeps existing value");
+});

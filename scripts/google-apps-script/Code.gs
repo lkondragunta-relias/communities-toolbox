@@ -639,9 +639,27 @@ function projectValues_(body) {
     owner: String(body.owner || '').trim(),
     teams: formatTeamsValue_(body.teams),
     link: String(body.link || '').trim(),
-    progress: (body.progress === '' || body.progress === undefined || body.progress === null)
-      ? '' : (Number(body.progress) || 0),
+    progress: normalizeProgress_(body.progress),
   };
+}
+
+/** Blank means "leave the cell alone"; anything else must be a whole percent 0-100. */
+function normalizeProgress_(value) {
+  if (value === '' || value === undefined || value === null) return '';
+  var raw = String(value).trim().replace(/%$/, '').trim();
+  if (!/^\d{1,3}$/.test(raw) || Number(raw) > 100) {
+    throw new Error('Progress must be a whole number from 0 to 100.');
+  }
+  return Number(raw);
+}
+
+/** Sheets created before the Progress field get the column appended on first write. */
+function ensureProgressColumn_(sheet, c) {
+  if (c.progress) return c;
+  var col = sheet.getLastColumn() + 1;
+  ensureColumnCount_(sheet, col);
+  sheet.getRange(1, col).setValue('Progress');
+  return projectColumns_(sheet);
 }
 
 var CONFIDENCE_LEVELS = ['Committed', 'Likely', 'Exploring'];
@@ -694,6 +712,7 @@ function addProject_(body) {
   var c = projectColumns_(sheet);
   var v = projectValues_(body);
   if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
+  if (v.progress !== '') c = ensureProgressColumn_(sheet, c);
 
   if (findProjectRow_(sheet, c, v.domain, v.id) >= 0) {
     throw new Error('ID already exists in this domain: ' + v.id);
@@ -711,6 +730,7 @@ function updateProject_(body) {
   var c = projectColumns_(sheet);
   var v = projectValues_(body);
   if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
+  if (v.progress !== '') c = ensureProgressColumn_(sheet, c);
 
   var rowIndex = findProjectRow_(sheet, c, v.domain, v.id);
   if (rowIndex < 0) throw new Error('ID not found: ' + v.id);

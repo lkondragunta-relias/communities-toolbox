@@ -4,6 +4,7 @@ import {
   formatQuarterRange,
   formatTimelineRange,
   parseInitiativeTeams,
+  displayProgress,
 } from "../utils/roadmapUtils";
 import { ConfidenceBadge, DoneToggle } from "./RoadmapBits";
 import { resolveStatus } from "../config/statusConfig";
@@ -52,6 +53,7 @@ export default function ProjectDetail({
   const priority = item?.priority ? resolvePriority(item.priority, priorities) : null;
   const teamLabels = new Map((data.teams || []).map((t) => [t.id, t.label || t.id]));
   const teams = item ? parseInitiativeTeams(item).map((id) => teamLabels.get(id) || id) : [];
+  const progress = item ? displayProgress(item) : 0;
 
   return (
     <div className={`detail-overlay${open ? " is-open" : ""}`} onClick={onClose} role="presentation">
@@ -100,11 +102,20 @@ export default function ProjectDetail({
               </Field>
               <Field label="Owner">{item.owner || "—"}</Field>
               <Field label="Teams">{teams.length ? teams.join(", ") : "—"}</Field>
-              {typeof item.progress === "number" ? (
+              {typeof item.progress === "number" || item.status ? (
                 <Field label="Progress">
                   <span className="detail__progress">
-                    <span className="detail__progress-bar" style={{ width: `${item.progress}%` }} />
-                    <span className="detail__progress-text">{item.progress}%</span>
+                    <span
+                      className="detail__progress-track"
+                      role="progressbar"
+                      aria-label="Progress"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={progress}
+                    >
+                      <span className="detail__progress-bar" style={{ width: `${progress}%` }} />
+                    </span>
+                    <span className="detail__progress-text">{progress}%</span>
                   </span>
                 </Field>
               ) : null}

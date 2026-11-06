@@ -14,6 +14,7 @@ import { DEFAULT_PRIORITIES } from "../config/priorityConfig";
 import { DEFAULT_ORG_ROLES, DEFAULT_ORGANIZATIONS, ORG_FIELDS, ORG_CATEGORIES, validateOrgAssignment } from "../config/orgConfig.js";
 import { plainSkillText, profileSnapshot, resolveOrgSkills, validatePersonProfile } from "../utils/orgSkills.js";
 import { feedbackPageUrl, validateFeedback } from "../config/feedbackConfig.js";
+import { parseProgress } from "../utils/roadmapUtils.js";
 
 export const LOCAL_ADMIN_TOKEN =
   (import.meta.env.VITE_LOCAL_ADMIN_TOKEN || "local-dev").trim();
@@ -541,7 +542,11 @@ async function updateProject(payload) {
     confidence: String(payload.confidence ?? row.confidence ?? "").trim(),
     link: String(payload.link ?? row.link ?? "").trim(),
   };
-  if (payload.progress !== undefined) next.progress = Number(payload.progress) || 0;
+  if (payload.progress !== undefined && payload.progress !== null && payload.progress !== "") {
+    const progress = parseProgress(payload.progress);
+    if (progress === null) throw new Error("Progress must be a whole number from 0 to 100.");
+    next.progress = progress;
+  }
   await db.projects.put(next);
   return { ok: true };
 }

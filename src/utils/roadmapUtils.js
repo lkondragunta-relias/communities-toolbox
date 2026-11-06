@@ -127,6 +127,28 @@ export function isAtRiskStatus(status) {
   return /risk/i.test(String(status || ""));
 }
 
+/** Started but unfinished work: Done implies 100%, Future/blank implies not started. */
+export function isProgressTrackable(status) {
+  const s = String(status || "").trim();
+  return Boolean(s) && !isDoneStatus(s) && !/^future$/i.test(s);
+}
+
+/** Whole-number percent 0-100, or null when the value is not a valid percentage. */
+export function parseProgress(value) {
+  const raw = String(value ?? "").trim().replace(/%$/, "").trim();
+  if (!/^\d{1,3}$/.test(raw)) return null;
+  const n = Number(raw);
+  return n >= 0 && n <= 100 ? n : null;
+}
+
+/** Percent to display for an item: Done is always 100, otherwise the stored value clamped. */
+export function displayProgress(item) {
+  if (isDoneStatus(item?.status)) return 100;
+  const n = Number(item?.progress);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
 export function parseDate(value) {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;

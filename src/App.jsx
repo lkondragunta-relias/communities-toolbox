@@ -44,6 +44,7 @@ import {
   getDomainKeys,
   getDomainNameMap,
   INITIAL_FILTER_STATE,
+  displayProgress,
   isDoneStatus,
   quarterEndISO,
   quarterOf,
@@ -123,8 +124,8 @@ function formPayloadToItem(payload) {
       .map((t) => t.trim())
       .filter(Boolean),
   };
-  // The edit form has no progress field — leave it out so the optimistic merge
-  // keeps the item's existing progress instead of wiping it to 0.
+  // Progress is only sent when the edit form shows it; otherwise keep the item's
+  // existing progress instead of wiping it to 0.
   if (payload.progress !== undefined) item.progress = Number(payload.progress) || 0;
   return item;
 }
@@ -366,6 +367,7 @@ export default function App() {
         confidence: resolveConfidence(item.confidence),
         link: item.link || "",
         teams: Array.isArray(item.teams) ? [...item.teams] : [],
+        progress: displayProgress({ progress: item.progress }),
       },
     });
   }, []);
