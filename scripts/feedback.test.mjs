@@ -33,13 +33,26 @@ function backend() {
           const rows = [];
           const sheet = {
             rows, getLastRow: () => rows.length,
-            getRange: (row, col, count = 1, width = 1) => ({
-              getValues: () => Array.from({ length: count }, (_, index) =>
-                Array.from({ length: width }, (__, column) => rows[row - 1 + index]?.[col - 1 + column] ?? "")),
-              setValues: (values) => { for (let i = 0; i < values.length; i++) rows[row - 1 + i] = [...values[i]]; },
-              setFontWeight: () => {},
-              setNumberFormat: () => {},
-            }),
+            getLastColumn: () => Math.max(0, ...rows.map((row) => row.length)),
+            getMaxColumns: () => 26,
+            insertColumnsAfter: () => {},
+            getRange: (row, col, count = 1, width = 1) => {
+              const range = {
+                getValues: () => Array.from({ length: count }, (_, index) =>
+                  Array.from({ length: width }, (__, column) => rows[row - 1 + index]?.[col - 1 + column] ?? "")),
+                setValues: (values) => {
+                  for (let i = 0; i < values.length; i++) {
+                    rows[row - 1 + i] ??= [];
+                    values[i].forEach((value, offset) => { rows[row - 1 + i][col - 1 + offset] = value; });
+                  }
+                  return range;
+                },
+                setValue: (value) => range.setValues([[value]]),
+                setFontWeight: () => range,
+                setNumberFormat: () => range,
+              };
+              return range;
+            },
             setFrozenRows: () => {}, appendRow: (values) => { assert.equal(locked, true); rows.push([...values]); },
           };
           sheets.set(name, sheet);
@@ -110,7 +123,7 @@ test("backend allows all categories/internal pages, rejects invalid or server-co
 test("admin branches remain authenticated and public reads never expose feedback", () => {
   const { context, post } = backend();
   assert.equal(post(input()).ok, true);
-  for (const action of ["add", "delete", "addIncident", "setupIncidentConfig", "saveOrgAssignment", "unknown"]) {
+  for (const action of ["add", "delete", "addIncident", "setupIncidentConfig", "saveOrgAssignment", "listFeedback", "updateFeedback", "unknown"]) {
     assert.match(post({ action }).error, /admin token/i);
     assert.match(post({ action, adminToken: "wrong" }).error, /admin token/i);
   }
@@ -130,6 +143,100 @@ test("formula prefixes are escaped and lock failure is an explicit failure", () 
   assert.equal(context.safeFeedbackCell_("<script>alert(1)</script>"), "<script>alert(1)</script>");
   context.LockService.getScriptLock = () => ({ waitLock: () => { throw new Error("busy"); }, releaseLock: () => assert.fail("Not acquired") });
   assert.equal(post(input()).ok, false);
+});
+
+test("Feedback migration appends admin columns, preserves extra columns and old dedupe, and is idempotent", () => {
+  const { context, sheets, post } = backend();
+  const body = input();
+  const first = post(body);
+  const sheet = sheets.get("Feedback");
+  sheet.rows[0] = [...Array.from(context.FEEDBACK_HEADERS).slice(0, 10), "Owner notes"];
+  sheet.rows[1] = [...sheet.rows[1].slice(0, 10), "=preserve existing cell"];
+  sheet.rows[1][7] = "";
+  context.setupFeedbackSheet();
+  assert.deepEqual(sheet.rows[0].slice(10), ["Owner notes", "Issue URL", "PR URL", "Updated At"]);
+  assert.equal(sheet.rows[1][10], "=preserve existing cell");
+  assert.equal(sheet.rows[1][7], "New");
+  assert.equal(sheet.rows[1][13], first.submittedAt);
+  const snapshot = JSON.stringify(sheet.rows);
+  context.setupFeedbackSheet();
+  assert.equal(JSON.stringify(sheet.rows), snapshot);
+  assert.deepEqual(post(body), first);
+  assert.equal(sheet.rows.length, 2);
+  const next = post(input());
+  assert.equal(sheet.rows[2][13], next.submittedAt);
+  assert.equal(sheet.rows[2][10], "");
+  assert.equal(sheets.get("Projects").untouched, true);
+});
+
+test("Feedback migration rejects incompatible headers/statuses without altering rows", () => {
+  for (const invalid of ["header", "status", "duplicate"]) {
+    const { context, sheets, post } = backend();
+    post(input());
+    const sheet = sheets.get("Feedback");
+    if (invalid === "header") sheet.rows[0][0] = "Unexpected ID";
+    if (invalid === "status") sheet.rows[1][7] = "=malicious status";
+    if (invalid === "duplicate") sheet.rows[0].push("Issue URL");
+    const snapshot = JSON.stringify(sheet.rows);
+    assert.throws(() => context.setupFeedbackSheet());
+    assert.equal(JSON.stringify(sheet.rows), snapshot);
+  }
+});
+
+test("admin list filters statuses and updates only tracking fields with optimistic concurrency", () => {
+  const { post, sheets } = backend();
+  const saved = post(input({ message: "=literal feedback" }));
+  const auth = { adminToken: "test-admin-token" };
+  const list = (status) => post({ ...auth, action: "listFeedback", ...(status ? { status } : {}) });
+  const initial = list().feedback[0];
+  assert.equal(list().ok, true);
+  assert.equal(initial.id, saved.id);
+  assert.equal(initial.updatedAt, saved.submittedAt);
+  assert.equal(initial.issueUrl, "");
+  assert.equal("requestFingerprint" in initial, false);
+  const original = sheets.get("Feedback").rows[1].slice(0, 7);
+  let current = initial;
+  for (const status of ["Issue created", "In progress", "In review", "Done", "Declined", "Needs info", "Needs approval", "New"]) {
+    const updated = post({ ...auth, action: "updateFeedback", id: saved.id, status,
+      issueUrl: "https://github.com/lkondragunta-relias/communities-toolbox/issues/42",
+      prUrl: "https://github.com/lkondragunta-relias/communities-toolbox/pull/43",
+      expectedUpdatedAt: current.updatedAt });
+    assert.equal(updated.ok, true);
+    assert.equal(updated.feedback.status, status);
+    assert.ok(Date.parse(updated.feedback.updatedAt) > Date.parse(current.updatedAt));
+    current = updated.feedback;
+    assert.equal(list(status).feedback.length, 1);
+  }
+  assert.equal(list("Done").feedback.length, 0);
+  assert.equal(post({ ...auth, action: "updateFeedback", id: saved.id, status: "Done", expectedUpdatedAt: initial.updatedAt }).ok, false);
+  assert.deepEqual(sheets.get("Feedback").rows[1].slice(0, 7), original);
+  assert.equal(list().feedback[0].updatedAt, current.updatedAt);
+});
+
+test("admin validation rejects forged URLs, field changes and duplicate IDs without modifying feedback", () => {
+  const { post, sheets } = backend();
+  const saved = post(input());
+  const auth = { adminToken: "test-admin-token" };
+  const sheet = sheets.get("Feedback");
+  const snapshot = JSON.stringify(sheet.rows);
+  for (const change of [
+    { status: "Complete" }, { status: {} }, { name: "Changed", status: "Done" },
+    { message: "=formula", status: "Done" }, { updatedAt: "forged", status: "Done" },
+    { issueUrl: "=HYPERLINK(\"evil\")" }, { issueUrl: "https://github.com/evil/repo/issues/1" },
+    { issueUrl: "https://github.com/lkondragunta-relias/communities-toolbox/issues/1?token=secret" },
+    { prUrl: "https://github.com/lkondragunta-relias/communities-toolbox/issues/1" },
+    { prUrl: null }, {}, { expectedUpdatedAt: 123, status: "Done" },
+  ]) {
+    assert.equal(post({ ...auth, action: "updateFeedback", id: saved.id, ...change }).ok, false);
+    assert.equal(JSON.stringify(sheet.rows), snapshot);
+  }
+  assert.equal(post({ ...auth, action: "listFeedback", status: "wrong" }).ok, false);
+  assert.equal(post({ ...auth, action: "listFeedback", name: "other" }).ok, false);
+  assert.equal(post({ ...auth, action: "updateFeedback", id: `FB-${randomUUID()}`, status: "Done" }).ok, false);
+  sheet.rows.push([...sheet.rows[1]]);
+  sheet.rows[2][0] = sheet.rows[2][0].toUpperCase();
+  assert.match(post({ ...auth, action: "listFeedback" }).error, /Duplicate Feedback ID/);
+  assert.match(post({ ...auth, action: "updateFeedback", id: saved.id, status: "Done" }).error, /Duplicate Feedback ID/);
 });
 
 let browser;

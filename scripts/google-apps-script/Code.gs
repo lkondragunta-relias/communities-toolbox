@@ -78,6 +78,9 @@ function doPostLocked_(e) {
     }
     var action = String(body.action || 'add').trim().toLowerCase();
 
+    if (action === 'listfeedback') return jsonResponse(listFeedback_(body));
+    if (action === 'updatefeedback') return jsonResponse(updateFeedback_(body));
+
     if (action === 'add') return jsonResponse(addProject_(body));
     if (action === 'update') return jsonResponse(updateProject_(body));
     if (action === 'delete') return jsonResponse(deleteProject_(body));
@@ -133,7 +136,8 @@ var FEEDBACK_PAGES = {
   overview: 'overview', timeline: 'roadmap', table: 'projects', incidents: 'operations',
   sites: 'cookiebot', org: 'prod-eng-org', settings: 'settings',
 };
-var FEEDBACK_HEADERS = ['ID', 'Submitted At', 'Name', 'Category', 'Page', 'Page URL', 'Message', 'Status', 'Request ID', 'Request Fingerprint'];
+var FEEDBACK_HEADERS = ['ID', 'Submitted At', 'Name', 'Category', 'Page', 'Page URL', 'Message', 'Status', 'Request ID', 'Request Fingerprint', 'Issue URL', 'PR URL', 'Updated At'];
+var FEEDBACK_STATUSES = ['New', 'Issue created', 'In progress', 'In review', 'Done', 'Declined', 'Needs info', 'Needs approval'];
 
 function validateFeedback_(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid feedback.');
@@ -175,15 +179,129 @@ function feedbackSheet_() {
   var sheet = ss_().getSheetByName('Feedback');
   if (!sheet) sheet = ss_().insertSheet('Feedback');
   if (sheet.getLastRow() === 0) {
+    if (FEEDBACK_HEADERS.length > sheet.getMaxColumns()) {
+      sheet.insertColumnsAfter(sheet.getMaxColumns(), FEEDBACK_HEADERS.length - sheet.getMaxColumns());
+    }
     sheet.getRange(1, 1, 1, FEEDBACK_HEADERS.length).setValues([FEEDBACK_HEADERS]);
     sheet.setFrozenRows(1);
     sheet.getRange(1, 1, 1, FEEDBACK_HEADERS.length).setFontWeight('bold');
   }
-  var headers = sheet.getRange(1, 1, 1, FEEDBACK_HEADERS.length).getValues()[0];
-  if (FEEDBACK_HEADERS.some(function (header, index) { return headers[index] !== header; })) {
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  if (FEEDBACK_HEADERS.slice(0, 10).some(function (header, index) { return headers[index] !== header; })) {
     throw new Error('Feedback headers do not match. Ask the sheet owner to check the Feedback tab.');
   }
+  var added = FEEDBACK_HEADERS.slice(10).filter(function (header) {
+    var matches = headers.filter(function (value) { return value === header; });
+    if (matches.length > 1) throw new Error('Duplicate Feedback header: ' + header);
+    return matches.length === 0;
+  });
+  var rows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues() : [];
+  rows.forEach(function (row) {
+    if (row[0] && row[7] && FEEDBACK_STATUSES.indexOf(row[7]) < 0) {
+      throw new Error('Invalid Feedback status for ' + row[0] + ': ' + row[7]);
+    }
+  });
+  if (added.length) {
+    var needed = headers.length + added.length;
+    if (needed > sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(), needed - sheet.getMaxColumns());
+    sheet.getRange(1, headers.length + 1, 1, added.length).setValues([added]).setFontWeight('bold');
+    headers = headers.concat(added);
+  }
+  var updatedCol = headers.indexOf('Updated At') + 1;
+  rows.forEach(function (row, index) {
+    if (!row[0]) return;
+    if (!row[7]) sheet.getRange(index + 2, 8).setValue('New');
+    if (!row[updatedCol - 1]) {
+      var timestamp = Object.prototype.toString.call(row[1]) === '[object Date]' ? row[1].toISOString() : String(row[1] || '');
+      if (!timestamp || !isFinite(Date.parse(timestamp))) timestamp = new Date().toISOString();
+      sheet.getRange(index + 2, updatedCol).setNumberFormat('@').setValue(timestamp);
+    }
+  });
   return sheet;
+}
+
+function feedbackRow_(row, headers) {
+  return {
+    id: String(row[0]), submittedAt: String(row[1]), name: String(row[2] || ''),
+    category: String(row[3] || ''), page: String(row[4] || ''), pageUrl: String(row[5] || ''),
+    message: String(row[6] || ''), status: String(row[7] || 'New'),
+    issueUrl: String(row[headers.indexOf('Issue URL')] || ''),
+    prUrl: String(row[headers.indexOf('PR URL')] || ''),
+    updatedAt: String(row[headers.indexOf('Updated At')] || ''),
+  };
+}
+
+function feedbackAdminFields_(body, allowed) {
+  if (Object.keys(body).some(function (key) { return allowed.indexOf(key) < 0; })) {
+    throw new Error('Unexpected feedback administration field.');
+  }
+}
+
+function listFeedback_(body) {
+  feedbackAdminFields_(body, ['action', 'adminToken', 'status']);
+  if (body.status !== undefined && (typeof body.status !== 'string' || FEEDBACK_STATUSES.indexOf(body.status) < 0)) {
+    throw new Error('Invalid Feedback status filter.');
+  }
+  var sheet = feedbackSheet_();
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var rows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues() : [];
+  var seen = {};
+  var feedback = rows.filter(function (row) { return Boolean(row[0]); }).map(function (row) {
+    var entry = feedbackRow_(row, headers);
+    var key = entry.id.toLowerCase();
+    if (seen[key]) throw new Error('Duplicate Feedback ID: ' + entry.id);
+    seen[key] = true;
+    return entry;
+  }).filter(function (entry) { return body.status === undefined || entry.status === body.status; });
+  return { ok: true, feedback: feedback };
+}
+
+function feedbackLink_(value, kind) {
+  if (typeof value !== 'string' || value.length > 200) throw new Error('Invalid Feedback ' + kind + ' URL.');
+  var pattern = kind === 'issue' ?
+    /^https:\/\/github\.com\/lkondragunta-relias\/communities-toolbox\/issues\/[1-9]\d*$/ :
+    /^https:\/\/github\.com\/lkondragunta-relias\/communities-toolbox\/pull\/[1-9]\d*$/;
+  if (value !== '' && !pattern.test(value)) throw new Error('Invalid Feedback ' + kind + ' URL.');
+  return value;
+}
+
+function updateFeedback_(body) {
+  feedbackAdminFields_(body, ['action', 'adminToken', 'id', 'status', 'issueUrl', 'prUrl', 'expectedUpdatedAt']);
+  if (typeof body.id !== 'string' || !/^FB-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.id)) {
+    throw new Error('Invalid Feedback ID.');
+  }
+  var changes = {};
+  if (body.status !== undefined) {
+    if (typeof body.status !== 'string' || FEEDBACK_STATUSES.indexOf(body.status) < 0) throw new Error('Invalid Feedback status.');
+    changes.Status = body.status;
+  }
+  if (body.issueUrl !== undefined) changes['Issue URL'] = feedbackLink_(body.issueUrl, 'issue');
+  if (body.prUrl !== undefined) changes['PR URL'] = feedbackLink_(body.prUrl, 'PR');
+  if (!Object.keys(changes).length) throw new Error('No Feedback changes supplied.');
+  if (body.expectedUpdatedAt !== undefined && (typeof body.expectedUpdatedAt !== 'string' || body.expectedUpdatedAt.length > 40)) {
+    throw new Error('Invalid Feedback revision.');
+  }
+  var sheet = feedbackSheet_();
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var rows = sheet.getLastRow() > 1 ? sheet.getRange(2, 1, sheet.getLastRow() - 1, headers.length).getValues() : [];
+  var matches = [];
+  rows.forEach(function (row, index) { if (String(row[0]).toLowerCase() === body.id.toLowerCase()) matches.push(index); });
+  if (matches.length !== 1) throw new Error(matches.length ? 'Duplicate Feedback ID: ' + body.id : 'Feedback not found: ' + body.id);
+  var index = matches[0];
+  var row = rows[index];
+  var current = feedbackRow_(row, headers);
+  if (body.expectedUpdatedAt !== undefined && current.updatedAt !== body.expectedUpdatedAt) {
+    throw new Error('Feedback changed since it was read. Refresh before updating.');
+  }
+  var updatedAt = new Date(Math.max(Date.now(), (Date.parse(current.updatedAt) || 0) + 1)).toISOString();
+  changes['Updated At'] = updatedAt;
+  Object.keys(changes).forEach(function (header) {
+    var col = headers.indexOf(header);
+    sheet.getRange(index + 2, col + 1).setNumberFormat('@').setValue(safeFeedbackCell_(changes[header]));
+    row[col] = changes[header];
+  });
+  SpreadsheetApp.flush();
+  return { ok: true, feedback: feedbackRow_(row, headers) };
 }
 
 function setupFeedbackSheet() {
@@ -214,11 +332,15 @@ function submitFeedback_(body) {
   var id = 'FB-' + Utilities.getUuid();
   var submittedAt = new Date().toISOString();
   var pageUrl = 'https://lkondragunta-relias.github.io/communities-toolbox/#/' + FEEDBACK_PAGES[input.page];
-  sheet.getRange(sheet.getLastRow() + 1, 1, 1, FEEDBACK_HEADERS.length).setNumberFormat('@');
-  sheet.appendRow([
+  var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  var values = [
     id, submittedAt, safeFeedbackCell_(input.name), input.category, input.page, pageUrl,
     safeFeedbackCell_(input.message), 'New', input.requestId, fingerprint,
-  ]);
+  ];
+  while (values.length < headers.length) values.push('');
+  values[headers.indexOf('Updated At')] = submittedAt;
+  sheet.getRange(sheet.getLastRow() + 1, 1, 1, headers.length).setNumberFormat('@');
+  sheet.appendRow(values);
   SpreadsheetApp.flush();
   return { ok: true, id: id, submittedAt: submittedAt, requestId: input.requestId };
 }

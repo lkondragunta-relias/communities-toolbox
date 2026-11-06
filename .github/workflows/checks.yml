@@ -21,4 +21,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:roadmap
       - run: npm run test:feedback
+      - run: npm run test:feedback-pipeline
+      - run: npm run test:skill-frontmatter
+      - run: npm run validate:skill-frontmatter
       - run: npm run build
