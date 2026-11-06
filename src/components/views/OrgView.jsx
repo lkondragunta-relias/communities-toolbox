@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ORG_FIELDS, orgKey, organizationColor, personKey, validOrgDate, validateOrgAssignment } from "../../config/orgConfig.js";
 import { buildOrganization, filterOrgRows, groupOrgRows, orgTeamAndPartnerBadges } from "../../utils/orgUtils.js";
-import { deleteOrgAssignment, getGoogleSheetUrl, isLocalMode, saveOrgAssignment, saveOrgPersonProfile, saveOrgSkill, deleteOrgSkill } from "../../services/sheetsApi";
+import { deleteOrgAssignment, isLocalMode, saveOrgAssignment, saveOrgPersonProfile, saveOrgSkill, deleteOrgSkill } from "../../services/sheetsApi";
 import OrgCommandChat from "../OrgCommandChat.jsx";
 import OrgDomainDetail from "../OrgDomainDetail.jsx";
 import OrgPersonDetail, { OrgSkillsManager } from "../OrgPersonDetail.jsx";
@@ -194,7 +194,6 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
     }
   }, [domainId, personId]);
   const ready = Boolean(data.org?.configured);
-  const sheetUrl = getGoogleSheetUrl();
   const rows = filterOrgRows([...model.filled, ...model.notApplicable], filters, model.personSkills, model.profiles);
   const skillFiltersActive = filters.skills.length > 0 || filters.focusAreas.length > 0;
   const skillsSupported = Boolean(data.org?.skillsSupported);
@@ -314,7 +313,6 @@ export default function OrgView({ data, adminUnlocked, adminToken, onUnlock, onL
             catch (err) { setError(err.message); }
             finally { setBusy(false); }
           }}>Refresh</button>
-          {sheetUrl ? <a className="org-workbook-button" href={sheetUrl} target="_blank" rel="noopener noreferrer">Open workbook</a> : null}
           {adminUnlocked && ready && !personId && (!domainId || model.domains.some((domain) => domain.id === domainId)) ? <button type="button" className="org-primary" onClick={() => setModal({ kind: "assignment", entry: domainId || filters.domain ? { domain: domainId || filters.domain } : null })}>+ Add assignment</button> : null}
         </div>
       </header>
