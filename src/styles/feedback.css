@@ -1,10 +1,15 @@
+:root {
+  --floating-action-size: 72px;
+  --floating-action-edge: 20px;
+  --floating-action-gap: 12px;
+}
 .feedback-trigger {
   position: fixed;
-  right: max(var(--sp-5), env(safe-area-inset-right));
-  bottom: max(var(--sp-5), env(safe-area-inset-bottom));
+  right: max(var(--floating-action-edge), env(safe-area-inset-right));
+  bottom: max(var(--floating-action-edge), env(safe-area-inset-bottom));
   z-index: 40;
-  width: 72px;
-  height: 72px;
+  width: var(--floating-action-size);
+  height: var(--floating-action-size);
   border-radius: 50%;
   border: 1px solid var(--accent);
   background: var(--accent);
@@ -120,7 +125,7 @@
 .feedback-panel__send:disabled { opacity: 0.6; cursor: not-allowed; }
 .feedback-panel__success p { margin-bottom: var(--sp-5); color: var(--success); }
 @media (max-width: 560px) {
-  .feedback-trigger { width: 64px; height: 64px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); }
+  :root { --floating-action-size: 64px; --floating-action-edge: 16px; }
   .feedback-panel__row { grid-template-columns: 1fr; }
   .feedback-panel input, .feedback-panel select, .feedback-panel textarea { font-size: 16px; }
 }

@@ -139,8 +139,25 @@
 .org-dialog footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .org-dialog .org-remove { margin-right: auto; color: #b91c1c; border-color: #b91c1c; }
 .org-dialog textarea { resize: vertical; }
-.org-chat { position: fixed; bottom: 18px; right: 18px; z-index: 30; width: min(420px, calc(100vw - 36px)); display: flex; flex-direction: column-reverse; align-items: end; gap: 8px; }
-.org-chat-panel { width: 100%; max-height: calc(100dvh - 100px); display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 36px #0003; font-size: 13px; }
+.org-chat {
+  position: fixed;
+  bottom: max(var(--floating-action-edge), env(safe-area-inset-bottom));
+  right: max(var(--floating-action-edge), env(safe-area-inset-right));
+  z-index: 30;
+  width: min(420px, calc(100vw - 2 * max(var(--floating-action-edge), env(safe-area-inset-right), env(safe-area-inset-left))));
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: end;
+  gap: var(--floating-action-gap);
+  pointer-events: none;
+}
+.org-chat-toggle {
+  margin-right: calc(var(--floating-action-size) + var(--floating-action-gap));
+  margin-block: calc((var(--floating-action-size) - 44px) / 2);
+  min-height: 44px;
+}
+.org-chat > * { pointer-events: auto; }
+.org-chat-panel { width: 100%; max-height: calc(100dvh - max(var(--floating-action-edge), env(safe-area-inset-top)) - max(var(--floating-action-edge), env(safe-area-inset-bottom)) - var(--floating-action-size) - var(--floating-action-gap)); display: flex; flex-direction: column; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 36px #0003; font-size: 13px; }
 .org-chat-panel header { padding: 14px 16px; border-bottom: 1px solid var(--border); display: grid; gap: 4px; }
 .org-chat-panel header span { color: var(--text-muted); font-size: 12px; }
 .org-chat-body { min-height: 0; overflow: auto; padding: 0 16px 14px; overflow-wrap: anywhere; }

@@ -67,6 +67,8 @@ receive it. The dialog asks for a required name and message, one of **Report a
 bug**, **Request a feature**, **Share feedback**, or **Report a data correction**,
 and an editable page selection that starts on the current page. There is no
 email field, upload, or extra admin unlock.
+On the organization page, **Edit with chat** sits beside Feedback, and its
+expanded assistant panel stays above both buttons on desktop and mobile.
 
 Feedback is append-only and is never included in the public roadmap GET.
 The dedicated `submitFeedback` action accepts only `action`, `requestId`, `name`,

@@ -349,3 +349,38 @@ test("modal stays accessible in dark/mobile themes without horizontal overflow a
     assert.ok(Math.abs(box.x - (390 - box.width) / 2) < 2);
   } finally { await page.close(); }
 });
+
+test("organization Edit launcher and expanded panel never overlap Feedback", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const feedback = page.getByRole("button", { name: "Send feedback", exact: true });
+  const edit = page.getByRole("button", { name: "Edit with chat", exact: true });
+  const panel = page.getByRole("region", { name: "Edit organization with guided commands", exact: true });
+  const intersects = (a, b) => a.x < b.x + b.width && a.x + a.width > b.x &&
+    a.y < b.y + b.height && a.y + a.height > b.y;
+  try {
+    await page.goto(`${localUrl}/?token=feedback-test-site#/prod-eng-org`);
+    await feedback.waitFor({ timeout: 15000 });
+    for (const [width, height] of [[1280, 900], [723, 963], [560, 740], [390, 844], [320, 568], [844, 390]]) {
+      await page.setViewportSize({ width, height });
+      const feedbackBox = await feedback.boundingBox();
+      const editBox = await edit.boundingBox();
+      assert.equal(intersects(feedbackBox, editBox), false, `${width}: closed launchers`);
+      assert.ok(feedbackBox.x - (editBox.x + editBox.width) >= 12, `${width}: launcher gap`);
+      await edit.click();
+      const panelBox = await panel.boundingBox();
+      assert.equal(intersects(feedbackBox, panelBox), false, `${width}: open panel and Feedback`);
+      assert.ok(feedbackBox.y - (panelBox.y + panelBox.height) >= 11, `${width}: panel gap`);
+      assert.ok(panelBox.x >= 0 && panelBox.y >= 0 &&
+        panelBox.x + panelBox.width <= width && panelBox.y + panelBox.height <= height, `${width}: panel stays on screen`);
+      await feedback.click();
+      assert.equal(await page.locator("dialog").evaluate((element) => element.open), true);
+      await page.keyboard.press("Escape");
+      assert.equal(await panel.isVisible(), true);
+      if (process.env.FEEDBACK_EVIDENCE_DIR && [1280, 390].includes(width)) {
+        await page.screenshot({ path: join(process.env.FEEDBACK_EVIDENCE_DIR, `feedback-edit-${width}-after.png`) });
+      }
+      await page.getByRole("button", { name: "Close assistant", exact: true }).click();
+    }
+  } finally { await page.close(); }
+});
