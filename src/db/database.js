@@ -498,27 +498,42 @@ function parseTeams(value) {
 
 async function addProject(payload) {
   const domain = String(payload.team || "").trim().toLowerCase();
-  const id = String(payload.id || "").trim();
   if (!domain) throw new Error("Domain is required.");
-  if (!id) throw new Error("ID is required.");
-  const key = projectKey(domain, id);
-  if (await db.projects.get(key)) throw new Error(`ID already exists: ${id}`);
-  await db.projects.add({
-    key,
-    domain,
-    id,
-    name: String(payload.name || "").trim(),
-    description: String(payload.description || "").trim(),
-    timeline: [String(payload.timelineStart || ""), String(payload.timelineEnd || "")],
-    status: String(payload.status || "").trim(),
-    teams: parseTeams(payload.teams),
-    owner: String(payload.owner || "").trim(),
-    priority: String(payload.priority || "").trim(),
-    confidence: String(payload.confidence || "").trim(),
-    link: String(payload.link || "").trim(),
-    progress: Number(payload.progress) || 0,
+  return db.transaction("rw", db.projects, db.domains, async () => {
+    const definition = await db.domains.get(domain);
+    const prefix = `${slug(definition?.name || domain)}-`;
+    if (prefix === "-") throw new Error("Domain must contain letters or numbers.");
+    const rows = await db.projects.where("domain").equalsIgnoreCase(domain).toArray();
+    let max = 0;
+    for (const row of rows) {
+      const current = String(row.id || "").trim().toLowerCase();
+      if (!current.startsWith(prefix)) continue;
+      const suffix = current.slice(prefix.length);
+      if (!/^\d+$/.test(suffix)) continue;
+      const number = Number(suffix);
+      if (!Number.isSafeInteger(number) || number >= Number.MAX_SAFE_INTEGER) {
+        throw new Error("Project ID sequence is too large for this domain.");
+      }
+      max = Math.max(max, number);
+    }
+    const id = `${prefix}${max + 1}`;
+    await db.projects.add({
+      key: projectKey(domain, id),
+      domain,
+      id,
+      name: String(payload.name || "").trim(),
+      description: String(payload.description || "").trim(),
+      timeline: [String(payload.timelineStart || ""), String(payload.timelineEnd || "")],
+      status: String(payload.status || "").trim(),
+      teams: parseTeams(payload.teams),
+      owner: String(payload.owner || "").trim(),
+      priority: String(payload.priority || "").trim(),
+      confidence: String(payload.confidence || "").trim(),
+      link: String(payload.link || "").trim(),
+      progress: Number(payload.progress) || 0,
+    });
+    return { ok: true, id };
   });
-  return { ok: true };
 }
 
 async function updateProject(payload) {

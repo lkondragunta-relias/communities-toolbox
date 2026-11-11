@@ -260,3 +260,23 @@ test("progress parsing and form validation accept only whole percents 0-100", as
   assert.equal(check({ status: "Done", progress: "150" }), undefined, "hidden field is not validated");
   assert.equal(check({ status: "In Progress" }), undefined, "omitted progress keeps existing value");
 });
+
+test("add form omits the ID while edit retains the existing read-only ID", async () => {
+  const AdminModal = (await server.ssrLoadModule("/src/components/AdminModal.jsx")).default;
+  const props = { domains: ["demo"], adminToken: "test", onClose: () => {} };
+  const add = renderToStaticMarkup(createElement(AdminModal, props));
+  assert.doesNotMatch(add, />ID <span/);
+  const edit = renderToStaticMarkup(createElement(AdminModal, {
+    ...props, mode: "edit", initialValues: { domain: "demo", id: "Legacy ID" },
+  }));
+  assert.match(edit, /value="Legacy ID"/);
+  assert.match(edit, /disabled=""/);
+
+  const { validateInitiativeForm } = await server.ssrLoadModule("/src/services/sheetsApi.js");
+  const form = {
+    domain: "demo", name: "Example", description: "Description",
+    timelineStart: "2026-10-01", timelineEnd: "2026-12-31",
+  };
+  assert.equal(validateInitiativeForm(form, [], [], [], { requireId: false }).valid, true);
+  assert.equal(validateInitiativeForm(form, [], [], []).errors.id, "ID is required.");
+});
