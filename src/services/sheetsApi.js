@@ -247,7 +247,11 @@ async function postToSheetsApi(payload) {
 }
 
 export async function addInitiative(payload) {
-  return postToSheetsApi({ ...payload, action: "add" });
+  const result = await postToSheetsApi({ ...payload, action: "add" });
+  if (result?.ok !== true || typeof result.id !== "string" || !result.id.trim()) {
+    throw new Error("Could not confirm the project was saved. Refresh the roadmap before trying again.");
+  }
+  return result;
 }
 
 export async function updateInitiative(payload) {
@@ -548,7 +552,8 @@ export function validateInitiativeForm(
   fields,
   validTeamIds = [],
   validStatusLabels = [],
-  validPriorityLabels = getValidPriorityLabels()
+  validPriorityLabels = getValidPriorityLabels(),
+  { requireId = true } = {}
 ) {
   const errors = {};
   const domain = String(fields.domain ?? fields.team ?? "").trim();
@@ -564,7 +569,7 @@ export function validateInitiativeForm(
   const teamIds = normalizeTeamsField(fields.teams ?? fields.cohort);
 
   if (!domain) errors.domain = "Domain is required.";
-  if (!id) errors.id = "ID is required.";
+  if (requireId && !id) errors.id = "ID is required.";
   if (!name) errors.name = "Name is required.";
   if (!description) errors.description = "Description is required.";
   if (!timelineStart) errors.timelineStart = "Start date is required.";

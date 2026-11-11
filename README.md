@@ -51,6 +51,37 @@ The roadmap displays initiatives on a quarterly timeline grid. Each initiative a
 - Hover initiatives for name and description
 - Add new initiatives via an admin modal (when the Sheets API is configured)
 
+### Automatic roadmap IDs
+
+The add form does not ask for an ID. The backend generates
+`<domain-slug>-<number>`, for example `nurse-enablement-1`. The slug comes from
+the stable domain key, not its display name. The number is the highest matching
+numeric suffix in that domain plus one. Existing clients that send an explicit
+ID still create that ID, with duplicate checks; an explicitly blank ID is
+rejected. Existing IDs stay unchanged, and the add response returns the saved ID.
+IDs and domain keys remain read-only during edits. The script lock and local
+IndexedDB transaction serialize concurrent creates; deleted highest numbers can
+be reused. Check the roadmap before retrying a failed or uncertain save.
+
+**Owner-controlled rollout:** merging to `main` triggers the Pages deployment,
+so do not merge until the backend is ready:
+
+1. Compare the live Apps Script with the reviewed `scripts/google-apps-script/Code.gs`
+   diff. Apply only the changes to `validateProjectFields_`, the new
+   `nextProjectId_`, and `addProject_`; do not replace the live source or its
+   properties. Confirm the live `doPost` holds a script-wide lock around the
+   full add operation and that `SpreadsheetApp.flush()` runs before release.
+   Reconcile any live differences manually.
+2. Verify the patch with synthetic data in a separate test environment, including
+   legacy explicit IDs and duplicates, blank and omitted IDs, domains whose key
+   differs from their label, parallel creates, edits, and returned IDs.
+3. Publish the reviewed patch as a new version of the existing Web App,
+   preserving its URL, access settings, and properties. Existing clients can
+   keep creating projects with explicit IDs during this transition.
+4. After the backend is deployed and verified, merge the PR and confirm the Pages
+   deployment. Perform an owner-approved verification. Do not
+   infer deployment from a merged PR alone.
+
 **Operations** is a second timeline in the same app: domain rows against a real
 date axis, one bar per outage, incident, release, migration or maintenance
 window, sized by how long it actually lasted. See
@@ -597,7 +628,7 @@ On **each** team tab, set **row 1** to these headers (exact names recommended):
 | ID  | Name | Description   | Timeline Start  | Timeline End  | Status | Teams | Owner | Priority | Link |
 
 - **Data rows** start at row 2.
-- **ID** — unique per tab (e.g. `PLAT-101`).
+- **ID** — unique within its domain; existing IDs such as `PLAT-101` remain valid.
 - **Timeline Start / End** — `YYYY-MM-DD` (e.g. `2026-04-01`). Date cells are formatted by the script.
 - **Status** — optional; one of the status dropdown values (`In Progress`, `Close to done`, `At Risk`, `Done`, `Future`, `Paused`). Drives the bar color. (A `Color` header with a hex value is still accepted here for backwards compatibility.)
 - **Teams** — optional team ids from App Config (comma-separated, e.g. `t1,t2`).

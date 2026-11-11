@@ -611,12 +611,12 @@ function setCol_(row, col, value) {
   if (col > 0 && col <= row.length) row[col - 1] = value;
 }
 
-function validateProjectFields_(body) {
+function validateProjectFields_(body, requireId) {
   var id = String(body.id || '').trim();
   var name = String(body.name || '').trim();
   var start = String(body.timelineStart || '').trim();
   var end = String(body.timelineEnd || '').trim();
-  if (!id) throw new Error('ID is required.');
+  if (requireId !== false && !id) throw new Error('ID is required.');
   if (!name) throw new Error('Name is required.');
   if (!start || !end) throw new Error('Timeline start and end are required.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
@@ -706,22 +706,49 @@ function writeProjectRow_(row, c, v) {
   if (v.progress !== '') setCol_(row, c.progress, v.progress);
 }
 
+function nextProjectId_(sheet, c, domain) {
+  if (!domain) throw new Error('Domain is required.');
+  if (!c.id || !c.domain) throw new Error('Projects tab needs ID and Domain columns.');
+  var slug = domain.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!slug) throw new Error('Domain must contain letters or numbers.');
+  var prefix = slug + '-';
+  var lastRow = sheet.getLastRow();
+  var values = lastRow < 2 ? [] : sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  var max = 0;
+  for (var i = 0; i < values.length; i++) {
+    if (String(cell_(values[i], c.domain) || '').trim().toLowerCase() !== domain) continue;
+    var id = String(cell_(values[i], c.id) || '').trim().toLowerCase();
+    if (id.indexOf(prefix) !== 0) continue;
+    var suffix = id.slice(prefix.length);
+    if (!/^\d+$/.test(suffix)) continue;
+    var number = Number(suffix);
+    if (!Number.isSafeInteger(number) || number >= Number.MAX_SAFE_INTEGER) {
+      throw new Error('Project ID sequence is too large for this domain.');
+    }
+    max = Math.max(max, number);
+  }
+  return prefix + (max + 1);
+}
+
 function addProject_(body) {
-  validateProjectFields_(body);
+  var hasId = Object.prototype.hasOwnProperty.call(body, 'id');
+  validateProjectFields_(body, hasId);
   var sheet = requireSheetByKeyword_('project', 'Projects');
   var c = projectColumns_(sheet);
   var v = projectValues_(body);
-  if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
-  if (v.progress !== '') c = ensureProgressColumn_(sheet, c);
-
+  if (!c.id) throw new Error('Projects tab needs an ID column.');
+  if (!hasId) v.id = nextProjectId_(sheet, c, v.domain);
   if (findProjectRow_(sheet, c, v.domain, v.id) >= 0) {
     throw new Error('ID already exists in this domain: ' + v.id);
   }
+  if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
+  if (v.progress !== '') c = ensureProgressColumn_(sheet, c);
 
   var row = buildEmptyRow_(sheet);
   writeProjectRow_(row, c, v);
   sheet.appendRow(row);
-  return { ok: true };
+  SpreadsheetApp.flush();
+  return { ok: true, id: v.id };
 }
 
 function updateProject_(body) {

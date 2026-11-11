@@ -62,7 +62,6 @@ export default function AdminModal({
   initialValues = null,
   domains,
   domainLabels = {},
-  existingIdsByDomain = {},
   teamOptions = [],
   validTeamIds = [],
   statusOptions = [],
@@ -84,16 +83,18 @@ export default function AdminModal({
     () => !isQuarterAligned([form.timelineStart, form.timelineEnd])
   );
   const [fieldErrors, setFieldErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
   const panelRef = useRef(null);
 
   useEffect(() => {
     panelRef.current?.focus();
     const onKey = (e) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !saving) onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, saving]);
 
   const handleUnlock = useCallback(
     (e) => {
@@ -154,26 +155,17 @@ export default function AdminModal({
         showProgress ? form : { ...form, progress: undefined },
         validTeamIds,
         validStatusLabels,
-        validPriorityLabels
+        validPriorityLabels,
+        { requireId: isEdit }
       );
       if (!valid) {
         setFieldErrors(errors);
         return;
       }
 
-      if (!isEdit) {
-        const domainKey = form.domain.trim().toLowerCase();
-        const idKey = form.id.trim().toLowerCase();
-        if (existingIdsByDomain[domainKey]?.has(idKey)) {
-          setFieldErrors({ id: `ID already exists in this domain: ${form.id.trim()}` });
-          return;
-        }
-      }
-
       const payload = {
         adminToken,
         team: form.domain.trim(),
-        id: form.id.trim(),
         name: form.name.trim(),
         description: form.description.trim(),
         timelineStart: form.timelineStart,
@@ -185,18 +177,31 @@ export default function AdminModal({
         link: form.link.trim(),
         teams: form.teams.join(","),
       };
+      if (isEdit) payload.id = form.id.trim();
       // Only send progress when the field is visible so hidden values never overwrite the sheet.
       if (showProgress) payload.progress = parseProgress(form.progress);
-      // Hand off to the parent for an optimistic apply + background write,
-      // then close immediately so the user isn't left waiting on the network.
-      onSave?.(payload);
-      onClose();
+      if (isEdit) {
+        onSave?.(payload);
+        onClose();
+        return;
+      }
+      if (saving) return;
+      setSaving(true);
+      setSaveError("");
+      try {
+        await onSave(payload);
+        onClose();
+      } catch (error) {
+        setSaveError(`${error.message || "Could not add project."} Check the roadmap before retrying in case the save succeeded.`);
+      } finally {
+        setSaving(false);
+      }
     },
     [
       adminToken,
       form,
       isEdit,
-      existingIdsByDomain,
+      saving,
       onSave,
       onClose,
       validTeamIds,
@@ -237,6 +242,7 @@ export default function AdminModal({
             className="admin-modal__close"
             aria-label="Close"
             onClick={onClose}
+            disabled={saving}
           >
             <span aria-hidden="true">×</span>
           </button>
@@ -305,7 +311,7 @@ export default function AdminModal({
               ) : null}
             </label>
 
-            <label className="admin-field">
+            {isEdit ? <label className="admin-field">
               <span className="admin-field__label">
                 ID <span className="admin-field__req">*</span>
               </span>
@@ -326,7 +332,7 @@ export default function AdminModal({
               {fieldErrors.id ? (
                 <span className="admin-field__error">{fieldErrors.id}</span>
               ) : null}
-            </label>
+            </label> : null}
 
             <label className="admin-field">
               <span className="admin-field__label">
@@ -611,6 +617,7 @@ export default function AdminModal({
                     type="button"
                     className="admin-btn admin-btn--ghost admin-btn--lock"
                     title="Forget the admin token on this device"
+                    disabled={saving}
                     onClick={() => {
                       onLock();
                       onClose();
@@ -623,15 +630,17 @@ export default function AdminModal({
                   type="button"
                   className="admin-btn admin-btn--ghost"
                   onClick={onClose}
+                  disabled={saving}
                 >
                   Cancel
                 </button>
+                {saveError ? <span className="admin-field__error" role="alert">{saveError}</span> : null}
                 <button
                   type="submit"
                   className="admin-btn admin-btn--primary"
-                  disabled={!isEdit && domains.length === 0}
+                  disabled={saving || (!isEdit && domains.length === 0)}
                 >
-                  {isEdit ? "Save changes" : "Add project"}
+                  {saving ? "Adding..." : isEdit ? "Save changes" : "Add project"}
                 </button>
               </>
             )}

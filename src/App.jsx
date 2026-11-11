@@ -273,30 +273,14 @@ export default function App() {
     [handleDeleteInitiative]
   );
 
-  // Optimistic add: show the new item immediately, POST in the background.
-  const handleOptimisticAdd = useCallback(
-    (payload) => {
-      if (!data) return;
-      const domain = String(payload.team || "").trim().toLowerCase();
-      const snapshot = data;
-      const next = {
-        ...data,
-        [domain]: [...(data[domain] || []), { progress: 0, ...formPayloadToItem(payload) }],
-      };
-      applyRoadmap(next);
-      setAdminOpen(false);
-      setAddPrefill(null);
-      (async () => {
-        try {
-          await addInitiative(payload);
-          refetch();
-        } catch (err) {
-          applyRoadmap(snapshot);
-          window.alert(err.message || "Could not add. Reverted.");
-        }
-      })();
+  const handleAdd = useCallback(
+    async (payload) => {
+      await addInitiative(payload);
+      await refetch({ throwOnError: true }).catch(() => {
+        window.alert("The project was saved, but the roadmap could not be refreshed. Refresh the page to see it.");
+      });
     },
-    [data, applyRoadmap, refetch]
+    [refetch]
   );
 
   // Optimistic edit: apply changes immediately, PUT in the background.
@@ -384,15 +368,6 @@ export default function App() {
   }, [sidebarCollapsed]);
 
   useEffect(() => () => clearHideTooltipTimer(), [clearHideTooltipTimer]);
-
-  const existingIdsByDomain = useMemo(() => {
-    if (!data) return {};
-    const map = {};
-    getDomainKeys(data).forEach((d) => {
-      map[d] = new Set((data[d] || []).map((p) => String(p.id).trim().toLowerCase()));
-    });
-    return map;
-  }, [data]);
 
   const showAdmin = hasSheetsApi();
   const adminUnlocked = Boolean(showAdmin && adminToken);
@@ -813,7 +788,6 @@ export default function App() {
       {adminOpen && data ? (
         <AdminModal
           initialValues={addPrefill}
-          existingIdsByDomain={existingIdsByDomain}
           domains={getDomainKeys(data)}
           domainLabels={getDomainNameMap(data)}
           teamOptions={getTeamOptionsForAdmin(data)}
@@ -826,7 +800,7 @@ export default function App() {
           onUnlock={handleAdminUnlock}
           onLock={handleAdminLock}
           onClose={handleCloseAdd}
-          onSave={handleOptimisticAdd}
+          onSave={handleAdd}
         />
       ) : null}
 
