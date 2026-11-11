@@ -499,24 +499,31 @@ function parseTeams(value) {
 async function addProject(payload) {
   const domain = String(payload.team || "").trim().toLowerCase();
   if (!domain) throw new Error("Domain is required.");
-  return db.transaction("rw", db.projects, db.domains, async () => {
-    const definition = await db.domains.get(domain);
-    const prefix = `${slug(definition?.name || domain)}-`;
-    if (prefix === "-") throw new Error("Domain must contain letters or numbers.");
+  const hasId = Object.prototype.hasOwnProperty.call(payload, "id");
+  let id = String(payload.id || "").trim();
+  if (hasId && !id) throw new Error("ID is required.");
+  return db.transaction("rw", db.projects, async () => {
     const rows = await db.projects.where("domain").equalsIgnoreCase(domain).toArray();
-    let max = 0;
-    for (const row of rows) {
-      const current = String(row.id || "").trim().toLowerCase();
-      if (!current.startsWith(prefix)) continue;
-      const suffix = current.slice(prefix.length);
-      if (!/^\d+$/.test(suffix)) continue;
-      const number = Number(suffix);
-      if (!Number.isSafeInteger(number) || number >= Number.MAX_SAFE_INTEGER) {
-        throw new Error("Project ID sequence is too large for this domain.");
+    if (!hasId) {
+      const prefix = `${slug(domain)}-`;
+      if (prefix === "-") throw new Error("Domain must contain letters or numbers.");
+      let max = 0;
+      for (const row of rows) {
+        const current = String(row.id || "").trim().toLowerCase();
+        if (!current.startsWith(prefix)) continue;
+        const suffix = current.slice(prefix.length);
+        if (!/^\d+$/.test(suffix)) continue;
+        const number = Number(suffix);
+        if (!Number.isSafeInteger(number) || number >= Number.MAX_SAFE_INTEGER) {
+          throw new Error("Project ID sequence is too large for this domain.");
+        }
+        max = Math.max(max, number);
       }
-      max = Math.max(max, number);
+      id = `${prefix}${max + 1}`;
     }
-    const id = `${prefix}${max + 1}`;
+    if (rows.some((row) => String(row.id || "").trim().toLowerCase() === id.toLowerCase())) {
+      throw new Error(`ID already exists in this domain: ${id}`);
+    }
     await db.projects.add({
       key: projectKey(domain, id),
       domain,

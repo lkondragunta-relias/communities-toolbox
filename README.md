@@ -55,13 +55,13 @@ The roadmap displays initiatives on a quarterly timeline grid. Each initiative a
 
 The add form does not ask for an ID. The backend generates
 `<domain-slug>-<number>`, for example `nurse-enablement-1`. The slug comes from
-the configured domain name, or its domain key when no definition exists. The
-number is the highest matching numeric suffix in that domain plus one. It ignores
-other legacy ID formats, keeps existing IDs unchanged, and returns the new ID in
-the add response. IDs and domain keys remain read-only during edits. The script lock
-and local IndexedDB transaction serialize concurrent creates; deleted highest
-numbers can be reused. A failed or uncertain save should be checked on the
-roadmap before retrying.
+the stable domain key, not its display name. The number is the highest matching
+numeric suffix in that domain plus one. Existing clients that send an explicit
+ID still create that ID, with duplicate checks; an explicitly blank ID is
+rejected. Existing IDs stay unchanged, and the add response returns the saved ID.
+IDs and domain keys remain read-only during edits. The script lock and local
+IndexedDB transaction serialize concurrent creates; deleted highest numbers can
+be reused. Check the roadmap before retrying a failed or uncertain save.
 
 **Owner-controlled rollout:** merging to `main` triggers the Pages deployment,
 so do not merge until the backend is ready:
@@ -73,13 +73,13 @@ so do not merge until the backend is ready:
    full add operation and that `SpreadsheetApp.flush()` runs before release.
    Reconcile any live differences manually.
 2. Verify the patch with synthetic data in a separate test environment, including
-   legacy IDs, empty domains, parallel creates, edits, and the returned ID.
-3. Coordinate a brief pause on adding projects. Publish the reviewed patch as a
-   new version of the existing Web App, preserving its URL, access settings, and
-   properties. The old frontend supplies an ID that the updated backend ignores,
-   so do not resume adds during this transition.
+   legacy explicit IDs and duplicates, blank and omitted IDs, domains whose key
+   differs from their label, parallel creates, edits, and returned IDs.
+3. Publish the reviewed patch as a new version of the existing Web App,
+   preserving its URL, access settings, and properties. Existing clients can
+   keep creating projects with explicit IDs during this transition.
 4. After the backend is deployed and verified, merge the PR and confirm the Pages
-   deployment. Resume adds and perform an owner-approved verification. Do not
+   deployment. Perform an owner-approved verification. Do not
    infer deployment from a merged PR alone.
 
 **Operations** is a second timeline in the same app: domain rows against a real

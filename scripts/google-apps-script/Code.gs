@@ -709,12 +709,7 @@ function writeProjectRow_(row, c, v) {
 function nextProjectId_(sheet, c, domain) {
   if (!domain) throw new Error('Domain is required.');
   if (!c.id || !c.domain) throw new Error('Projects tab needs ID and Domain columns.');
-  var domains = readDomains_();
-  var label = domain;
-  for (var d = 0; d < domains.length; d++) {
-    if (domains[d].id === domain) label = domains[d].name;
-  }
-  var slug = label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  var slug = domain.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   if (!slug) throw new Error('Domain must contain letters or numbers.');
   var prefix = slug + '-';
   var lastRow = sheet.getLastRow();
@@ -736,11 +731,16 @@ function nextProjectId_(sheet, c, domain) {
 }
 
 function addProject_(body) {
-  validateProjectFields_(body, false);
+  var hasId = Object.prototype.hasOwnProperty.call(body, 'id');
+  validateProjectFields_(body, hasId);
   var sheet = requireSheetByKeyword_('project', 'Projects');
   var c = projectColumns_(sheet);
   var v = projectValues_(body);
-  v.id = nextProjectId_(sheet, c, v.domain);
+  if (!c.id) throw new Error('Projects tab needs an ID column.');
+  if (!hasId) v.id = nextProjectId_(sheet, c, v.domain);
+  if (findProjectRow_(sheet, c, v.domain, v.id) >= 0) {
+    throw new Error('ID already exists in this domain: ' + v.id);
+  }
   if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
   if (v.progress !== '') c = ensureProgressColumn_(sheet, c);
 
