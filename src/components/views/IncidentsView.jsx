@@ -642,6 +642,12 @@ export default function IncidentsView({
               tone={stats.openCount ? "danger" : "ok"}
             />
             <StatCard
+              label={`Releases · ${scopeLabel}`}
+              value={stats.releaseCount}
+              hint={stats.releaseCount ? "Logged releases in this scope" : "No releases in this scope"}
+              tone="info"
+            />
+            <StatCard
               label={`Incidents · ${scopeLabel}`}
               value={stats.incidentCount}
               hint={<SeverityCounts counts={stats.severity} empty="None logged in this scope" />}
