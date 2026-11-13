@@ -25,6 +25,10 @@ function backend(initial = []) {
     getRange: (row, col, count = 1, width = 1) => ({
       getValues: () => Array.from({ length: count }, (_, i) =>
         Array.from({ length: width }, (_, j) => rows[row - 1 + i]?.[col - 1 + j] ?? "")),
+      setValue: (value) => {
+        rows[row - 1] ??= [];
+        rows[row - 1][col - 1] = value;
+      },
       setValues: (values) => {
         assert.equal(locked, true);
         for (let i = 0; i < values.length; i++) {
@@ -34,6 +38,10 @@ function backend(initial = []) {
       },
     }),
     appendRow: (values) => { assert.equal(locked, true); rows.push([...values]); },
+    getMaxColumns: () => rows[0].length,
+    insertColumnsAfter: (after, count) => {
+      rows.forEach((row) => row.splice(after, 0, ...Array(count).fill("")));
+    },
   };
   const domainRows = [["Title", "Name"], ["ne", "Nurse Enablement"]];
   const domainSheet = {
@@ -60,7 +68,7 @@ function backend(initial = []) {
   api.jsonResponse = (value) => JSON.parse(JSON.stringify(value));
   api.parsePostBody_ = (event) => JSON.parse(event.postData.contents);
   const post = (body) => api.doPost({ postData: { contents: JSON.stringify(body) } });
-  return { post, rows, flushCount: () => flushed };
+  return { post, rows, readProjects: () => api.readProjects_(), flushCount: () => flushed };
 }
 
 test("Apps Script preserves explicit IDs and generates domain-key sequences under the lock", () => {
@@ -102,6 +110,35 @@ test("Apps Script rejects invalid domains, missing columns and unsafe sequences 
   const huge = backend([["nurse-enablement-9007199254740991", "nurse-enablement"]]);
   assert.match(huge.post(input()).error, /sequence is too large/);
   assert.equal(huge.rows.length, 2);
+});
+
+test("Apps Script persists optional Jira epic links and reads blank or legacy values", () => {
+  const { post, rows, readProjects } = backend([
+    ["legacy-1", "nurse-enablement", "Legacy", "", "", "", "", "", "", "", "", "", ""],
+  ]);
+  const added = post(input({ jiraEpicLink: "https://jira.example/browse/EPIC-1" }));
+  assert.deepEqual(added, { ok: true, id: "nurse-enablement-1" });
+  const jiraColumn = rows[0].indexOf("Jira Epic Link");
+  assert.ok(jiraColumn >= 0, "populated links add the optional sheet column");
+  assert.equal(rows[2][jiraColumn], "https://jira.example/browse/EPIC-1");
+
+  assert.equal(post(input({
+    action: "update", id: "legacy-1", jiraEpicLink: "https://jira.example/browse/EPIC-2",
+  })).ok, true);
+  assert.equal(rows[1][jiraColumn], "https://jira.example/browse/EPIC-2");
+  assert.equal(readProjects().find((project) => project.id === "legacy-1").jiraEpicLink,
+    "https://jira.example/browse/EPIC-2");
+
+  assert.equal(post(input({ action: "update", id: "legacy-1" })).ok, true);
+  assert.equal(rows[1][jiraColumn], "https://jira.example/browse/EPIC-2", "older clients leave the field unchanged");
+  assert.equal(post(input({ action: "update", id: "legacy-1", jiraEpicLink: "" })).ok, true);
+  assert.equal(rows[1][jiraColumn], "");
+  assert.equal(readProjects().find((project) => project.id === "legacy-1").jiraEpicLink, "");
+
+  const legacy = backend([["legacy-2", "nurse-enablement", "Old row"]]);
+  assert.equal(legacy.readProjects()[0].jiraEpicLink, "");
+  assert.equal(legacy.post(input({ action: "update", id: "legacy-2" })).ok, true);
+  assert.equal(legacy.readProjects()[0].jiraEpicLink, "");
 });
 
 let server;
@@ -149,7 +186,16 @@ test("local IndexedDB serializes concurrent creates and preserves legacy edits",
       ]);
       const parallelRows = await db.projects.where("domain").equals("parallel").toArray();
       await postToLocal({ action: "update", team: "nurse-enablement", id: "NE8", name: "Changed" });
-      return { created, empty, named, explicit, errors, competing, parallelRows, legacy: await db.projects.get("nurse-enablement::NE8") };
+      const jiraUrl = "https://jira.example/browse/EPIC-1";
+      await postToLocal({ ...body, id: "jira-1", jiraEpicLink: jiraUrl });
+      await postToLocal({ action: "update", team: "nurse-enablement", id: "jira-1" });
+      const preservedJira = await db.projects.get("nurse-enablement::jira-1");
+      await postToLocal({ action: "update", team: "nurse-enablement", id: "jira-1", jiraEpicLink: "" });
+      const clearedJira = await db.projects.get("nurse-enablement::jira-1");
+      return {
+        created, empty, named, explicit, errors, competing, parallelRows,
+        legacy: await db.projects.get("nurse-enablement::NE8"), preservedJira, clearedJira,
+      };
     });
     assert.deepEqual(result.created.map((x) => x.id).sort(), Array.from({ length: 10 }, (_, i) => `nurse-enablement-${i + 3}`).sort());
     assert.deepEqual(result.empty, { ok: true, id: "empty-domain-1" });
@@ -169,6 +215,8 @@ test("local IndexedDB serializes concurrent creates and preserves legacy edits",
     }
     assert.equal(result.legacy.id, "NE8");
     assert.equal(result.legacy.name, "Changed");
+    assert.equal(result.preservedJira.jiraEpicLink, "https://jira.example/browse/EPIC-1");
+    assert.equal(result.clearedJira.jiraEpicLink, "");
   } finally {
     await page.close();
   }
@@ -191,6 +239,7 @@ test("add dialog submits without an ID and stays open until the save finishes", 
         initialValues: {
           domain: "nurse-enablement", name: "Test", description: "Description",
           timelineStart: "2026-01-01", timelineEnd: "2026-03-31",
+          jiraEpicLink: "https://jira.example/browse/EPIC-1",
         },
         onSave: (payload) => { window.savedPayload = payload; return pending; },
         onClose: () => { window.dialogClosed = true; },
@@ -198,6 +247,7 @@ test("add dialog submits without an ID and stays open until the save finishes", 
     });
     await page.getByRole("button", { name: "Add project" }).click();
     assert.equal(await page.evaluate(() => "id" in window.savedPayload), false);
+    assert.equal(await page.evaluate(() => window.savedPayload.jiraEpicLink), "https://jira.example/browse/EPIC-1");
     await page.getByRole("button", { name: "Adding..." }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Close", exact: true }).isDisabled(), true);
     await page.keyboard.press("Escape");

@@ -41,6 +41,7 @@ const EMPTY_FORM = {
   priority: "",
   confidence: DEFAULT_CONFIDENCE,
   link: "",
+  jiraEpicLink: "",
   teams: [],
   progress: "",
 };
@@ -175,6 +176,7 @@ export default function AdminModal({
         priority: form.priority || "",
         confidence: form.confidence || "",
         link: form.link.trim(),
+        jiraEpicLink: form.jiraEpicLink.trim(),
         teams: form.teams.join(","),
       };
       if (isEdit) payload.id = form.id.trim();
@@ -578,6 +580,20 @@ export default function AdminModal({
               />
               {fieldErrors.link ? (
                 <span className="admin-field__error">{fieldErrors.link}</span>
+              ) : null}
+            </label>
+
+            <label className="admin-field">
+              <span className="admin-field__label">Jira epic link (optional)</span>
+              <input
+                type="url"
+                className="admin-field__input"
+                value={form.jiraEpicLink}
+                onChange={(e) => updateField("jiraEpicLink", e.target.value)}
+                placeholder="https://…"
+              />
+              {fieldErrors.jiraEpicLink ? (
+                <span className="admin-field__error">{fieldErrors.jiraEpicLink}</span>
               ) : null}
             </label>
 

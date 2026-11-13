@@ -128,6 +128,15 @@ export default function ProjectDetail({
                   "—"
                 )}
               </Field>
+              <Field label="Jira epic link">
+                {item.jiraEpicLink ? (
+                  <a href={item.jiraEpicLink} target="_blank" rel="noopener noreferrer">
+                    {item.jiraEpicLink}
+                  </a>
+                ) : (
+                  "—"
+                )}
+              </Field>
               <div className="detail__field detail__field--block">
                 <span className="detail__field-label">Description</span>
                 <p className="detail__desc">{item.description || "No description."}</p>

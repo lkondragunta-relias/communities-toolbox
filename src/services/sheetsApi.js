@@ -57,7 +57,7 @@ function resolveTeamFilterDefinitions(payload) {
 /**
  * Accepts a FLAT remote payload (easy to produce from SharePoint/Power Automate):
  *   { projects:[{domain,id,name,description,timelineStart,timelineEnd,status,
- *                teams,owner,priority,confidence,link,progress}],
+ *                teams,owner,priority,confidence,link,jiraEpicLink,progress}],
  *     teams:[{id,label,color}], domains:[{id,name}],
  *     statuses:[{id,label,color}], priorities:[{id,label,color}] }
  * and reshapes it into the nested form the UI expects. If the payload is already
@@ -104,6 +104,7 @@ export function normalizeRemotePayload(payload) {
       priority: p.priority || "",
       confidence: p.confidence || "",
       link: p.link || "",
+      jiraEpicLink: p.jiraEpicLink || "",
       progress: Number(p.progress) || 0,
     });
   });
@@ -566,6 +567,7 @@ export function validateInitiativeForm(
   const priority = String(fields.priority || "").trim();
   const confidence = String(fields.confidence || "").trim();
   const link = String(fields.link || "").trim();
+  const jiraEpicLink = String(fields.jiraEpicLink || "").trim();
   const teamIds = normalizeTeamsField(fields.teams ?? fields.cohort);
 
   if (!domain) errors.domain = "Domain is required.";
@@ -599,6 +601,10 @@ export function validateInitiativeForm(
 
   if (link && !/^https?:\/\//i.test(link)) {
     errors.link = "Link must start with http:// or https://";
+  }
+
+  if (jiraEpicLink && !/^https?:\/\//i.test(jiraEpicLink)) {
+    errors.jiraEpicLink = "Jira epic link must start with http:// or https://";
   }
 
   if (fields.progress !== undefined && isProgressTrackable(status) && parseProgress(fields.progress) === null) {
