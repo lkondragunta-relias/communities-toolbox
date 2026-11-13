@@ -267,10 +267,14 @@ test("add form omits the ID while edit retains the existing read-only ID", async
   const add = renderToStaticMarkup(createElement(AdminModal, props));
   assert.doesNotMatch(add, />ID <span/);
   const edit = renderToStaticMarkup(createElement(AdminModal, {
-    ...props, mode: "edit", initialValues: { domain: "demo", id: "Legacy ID" },
+    ...props, mode: "edit", initialValues: {
+      domain: "demo", id: "Legacy ID", jiraEpicLink: "https://jira.example/browse/EPIC-1",
+    },
   }));
   assert.match(edit, /value="Legacy ID"/);
   assert.match(edit, /disabled=""/);
+  assert.match(add, /Jira epic link \(optional\)/);
+  assert.match(edit, /value="https:\/\/jira\.example\/browse\/EPIC-1"/);
 
   const { validateInitiativeForm } = await server.ssrLoadModule("/src/services/sheetsApi.js");
   const form = {
@@ -279,4 +283,35 @@ test("add form omits the ID while edit retains the existing read-only ID", async
   };
   assert.equal(validateInitiativeForm(form, [], [], [], { requireId: false }).valid, true);
   assert.equal(validateInitiativeForm(form, [], [], []).errors.id, "ID is required.");
+  assert.equal(validateInitiativeForm({ ...form, jiraEpicLink: "" }, [], [], [], { requireId: false }).valid, true);
+  assert.match(
+    validateInitiativeForm({ ...form, jiraEpicLink: "EPIC-1" }, [], [], [], { requireId: false }).errors.jiraEpicLink,
+    /http:\/\/ or https:\/\//
+  );
+});
+
+test("flat roadmap data and initiative details preserve and display optional Jira epic links", async () => {
+  const { normalizeRemotePayload } = await server.ssrLoadModule("/src/services/sheetsApi.js");
+  const payload = {
+    projects: [
+      { domain: "demo", id: "linked", jiraEpicLink: "https://jira.example/browse/EPIC-1" },
+      { domain: "demo", id: "blank" },
+    ],
+    domains: [{ id: "demo", name: "Demo" }],
+  };
+  const normalized = normalizeRemotePayload(payload);
+  assert.equal(normalized.demo[0].jiraEpicLink, "https://jira.example/browse/EPIC-1");
+  assert.equal(normalized.demo[1].jiraEpicLink, "");
+
+  const ProjectDetail = (await server.ssrLoadModule("/src/components/ProjectDetail.jsx")).default;
+  const details = renderToStaticMarkup(createElement(ProjectDetail, {
+    data: {
+      demo: [{ ...item("linked", [], "Future"), jiraEpicLink: "https://jira.example/browse/EPIC-1" }],
+      teams: [], statuses: [], priorities: [],
+    },
+    selected: { domain: "demo", id: "linked" },
+    canEdit: false, canDelete: false, onClose: () => {},
+  }));
+  assert.match(details, /Jira epic/);
+  assert.match(details, /href="https:\/\/jira\.example\/browse\/EPIC-1"/);
 });
