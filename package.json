@@ -8,6 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "test:roadmap": "node --test scripts/roadmap.test.mjs scripts/roadmap-id.test.mjs",
+    "test:incidents": "node --test scripts/incidents.test.mjs",
     "test:feedback": "node --test scripts/feedback.test.mjs",
     "test:feedback-pipeline": "node --test scripts/feedback-pipeline.test.mjs",
     "test:skill-frontmatter": "node --test scripts/skill-frontmatter.test.mjs",

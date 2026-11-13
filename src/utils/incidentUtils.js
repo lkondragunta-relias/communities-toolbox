@@ -294,6 +294,9 @@ export function normalizeIncident(
     rawLinks: String(raw.links ?? ""),
     color: getEventColor(type, severity),
     isIncident: !type.planned,
+    isRelease: type.planned && (
+      normalizeToken(raw.cause) === "release" || normalizeToken(raw.type) === "release"
+    ),
     // Blank/missing means "counts" — a workbook without this column yet (or
     // rows logged before it existed) must not silently drop out of Uptime%.
     countsAgainstUptime: String(raw.countsAgainstUptime || "").trim(),
@@ -497,6 +500,7 @@ export function computeIncidentStats(scoped, all) {
     monitoringCount: open.filter((e) => e.status.id === "monitoring").length,
     openSeverity: countBySeverity(open),
     incidentCount: incidents.length,
+    releaseCount: scoped.filter((e) => e.isRelease).length,
     severity: countBySeverity(incidents),
     highPlusCount: highPlus.length,
     criticalCount: critical.length,
