@@ -87,7 +87,11 @@ export default function InitiativeBar({
         />
       ) : null}
       <DoneToggle item={item} domain={category} onToggle={onToggleDone} size="sm" />
-      <span className="initiative__name">{item.name}</span>
+      <span
+        className={`initiative__name${String(item.jiraEpicLink || "").trim() ? " initiative__name--epic-linked" : ""}`}
+      >
+        {item.name}
+      </span>
     </div>
   );
 }

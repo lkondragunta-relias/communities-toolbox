@@ -57,10 +57,10 @@ after(async () => {
   await server?.close();
 });
 
-async function render(Component, filters = {}, theme = "light") {
+async function render(Component, filters = {}, theme = "light", sourceData = data, onSelect) {
   const filterState = { ...utils.INITIAL_FILTER_STATE, ...filters };
   const markup = renderToStaticMarkup(createElement(Component, {
-    data, filterState, today,
+    data: sourceData, filterState, today, onSelect,
     quarters: utils.setQuartersFromData({ quarters: utils.buildFocusQuartersRaw(today) }),
     onShowTooltip: () => {}, onHideTooltip: () => {},
   }));
@@ -181,6 +181,54 @@ for (const surface of ["board", "list"]) {
     assert.ok(all.some((name) => name.includes("Unassigned done")));
   });
 }
+
+test("epic-linked roadmap titles are underlined without changing colors or click targets", async () => {
+  const linkedFuture = {
+    ...item("Linked future", ["headless"], "Future"),
+    jiraEpicLink: "https://jira.example/browse/EPIC-1",
+  };
+  const blankFuture = item("Blank future", ["headless"], "Future");
+  const linkedDone = {
+    ...item("Linked done", ["headless"], "Done"),
+    jiraEpicLink: "https://jira.example/browse/EPIC-2",
+  };
+  const epicData = { ...data, demo: [linkedFuture, blankFuture, linkedDone], second: [] };
+  const decoration = async (selector, name) => page.locator(selector, {
+    hasText: new RegExp(`^${name}$`),
+  }).evaluate((element) => {
+    const style = getComputedStyle(element);
+    return { line: style.textDecorationLine, color: style.color };
+  });
+
+  await render(Grid, {}, "light", epicData, () => {});
+  const timelineLinked = await decoration(".initiative__name", "Linked future");
+  const timelineBlank = await decoration(".initiative__name", "Blank future");
+  assert.equal(timelineLinked.line, "underline");
+  assert.equal(timelineBlank.line, "none");
+  assert.equal(timelineLinked.color, timelineBlank.color);
+  assert.equal(
+    await page.locator(".initiative__name", { hasText: "Linked future" })
+      .evaluate((element) => element.closest(".initiative").getAttribute("role")),
+    "button",
+    "linked title remains inside the initiative click target"
+  );
+
+  await render(Board, {}, "light", epicData);
+  const boardLinked = await decoration(".board-card__name", "Linked future");
+  const boardBlank = await decoration(".board-card__name", "Blank future");
+  assert.equal(boardLinked.line, "underline");
+  assert.equal(boardBlank.line, "none");
+  assert.equal(boardLinked.color, boardBlank.color);
+  const doneLines = new Set((await decoration(".board-card__name", "Linked done")).line.split(" "));
+  assert.ok(doneLines.has("underline"));
+  assert.ok(doneLines.has("line-through"), "Done keeps its existing strikethrough");
+  assert.equal(
+    await page.locator(".board-card__name", { hasText: "Linked future" })
+      .evaluate((element) => element.closest(".board-card").getAttribute("role")),
+    "button",
+    "linked title remains inside the board card click target"
+  );
+});
 
 const progressItem = (id, status, progress) => ({ ...item(id, ["other"], status), progress });
 const progressData = {

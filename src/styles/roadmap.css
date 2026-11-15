@@ -4118,6 +4118,8 @@ html[data-theme="dark"] .confidence-badge--likely { border-color: var(--tone-inf
 /* ---------- Timeline: bars ---------- */
 .initiative { gap: 6px; }
 .initiative__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.initiative__name--epic-linked,
+.board-card__name--epic-linked { text-decoration-line: underline; }
 /* Progress fill sits behind the toggle and name, left to right across the bar. */
 .initiative__progress {
   position: absolute;
@@ -4367,6 +4369,7 @@ html[data-theme="dark"] .confidence-badge--likely { border-color: var(--tone-inf
   background: color-mix(in srgb, var(--done) 8%, var(--bg-elevated));
 }
 .board-card--done .board-card__name { color: var(--text-muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--done) 60%, transparent); }
+.board-card--done .board-card__name--epic-linked { text-decoration-line: underline line-through; }
 
 .board-card__progress { margin-left: 28px; height: 4px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, #3b82f6 14%, transparent); }
 .board-card__progress-fill { display: block; height: 100%; border-radius: inherit; background: #3b82f6; }
