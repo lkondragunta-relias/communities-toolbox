@@ -119,6 +119,7 @@ function formPayloadToItem(payload) {
     priority: payload.priority || "",
     confidence: payload.confidence || "",
     link: payload.link || "",
+    jiraEpicLink: payload.jiraEpicLink || "",
     teams: String(payload.teams || "")
       .split(/[,;]/)
       .map((t) => t.trim())
@@ -350,6 +351,7 @@ export default function App() {
         priority: item.priority || "",
         confidence: resolveConfidence(item.confidence),
         link: item.link || "",
+        jiraEpicLink: item.jiraEpicLink || "",
         teams: Array.isArray(item.teams) ? [...item.teams] : [],
         progress: displayProgress({ progress: item.progress }),
       },
@@ -447,6 +449,7 @@ export default function App() {
         priority: item.priority || "",
         confidence: item.confidence || "",
         link: item.link || "",
+        jiraEpicLink: item.jiraEpicLink || "",
         teams: (Array.isArray(item.teams) ? item.teams : []).join(","),
       });
     },

@@ -537,6 +537,7 @@ async function addProject(payload) {
       priority: String(payload.priority || "").trim(),
       confidence: String(payload.confidence || "").trim(),
       link: String(payload.link || "").trim(),
+      jiraEpicLink: String(payload.jiraEpicLink || "").trim(),
       progress: Number(payload.progress) || 0,
     });
     return { ok: true, id };
@@ -563,6 +564,7 @@ async function updateProject(payload) {
     priority: String(payload.priority ?? row.priority ?? "").trim(),
     confidence: String(payload.confidence ?? row.confidence ?? "").trim(),
     link: String(payload.link ?? row.link ?? "").trim(),
+    jiraEpicLink: String(payload.jiraEpicLink ?? row.jiraEpicLink ?? "").trim(),
   };
   if (payload.progress !== undefined && payload.progress !== null && payload.progress !== "") {
     const progress = parseProgress(payload.progress);

@@ -10,7 +10,8 @@
  *
  *   Projects   : Title(=id) | Domain | Name | Description | TimelineStart |
  *                TimelineEnd | Status | Priority | Owner | Teams | Link | Progress |
- *                Confidence (Committed | Likely | Exploring — added on first write)
+ *                Confidence (Committed | Likely | Exploring — added on first write) |
+ *                Jira Epic Link (optional; added on first populated write)
  *   Teams      : Title(=id) | Label | Color
  *   Domains    : Title(=id) | Name
  *   Statuses   : Title(=label) | Color | SortOrder
@@ -485,6 +486,7 @@ function projectColumns_(sheet) {
     owner: colOf_(map, ['owner']),
     teams: colOf_(map, ['teams', 'team', 'cohort']),
     link: colOf_(map, ['link', 'links', 'url']),
+    jiraEpicLink: colOf_(map, ['jira epic link', 'epic link']),
     progress: colOf_(map, ['progress', 'progress %', 'percent']),
   };
 }
@@ -515,6 +517,7 @@ function readProjects_() {
       owner: String(cell_(row, c.owner) || '').trim(),
       teams: String(cell_(row, c.teams) || '').trim(),
       link: String(cell_(row, c.link) || '').trim(),
+      jiraEpicLink: String(cell_(row, c.jiraEpicLink) || '').trim(),
       progress: c.progress ? (Number(cell_(row, c.progress)) || 0) : 0,
     });
   }
@@ -639,6 +642,8 @@ function projectValues_(body) {
     owner: String(body.owner || '').trim(),
     teams: formatTeamsValue_(body.teams),
     link: String(body.link || '').trim(),
+    jiraEpicLink: String(body.jiraEpicLink || '').trim(),
+    hasJiraEpicLink: Object.prototype.hasOwnProperty.call(body, 'jiraEpicLink'),
     progress: normalizeProgress_(body.progress),
   };
 }
@@ -685,6 +690,14 @@ function ensureConfidenceColumn_(sheet, c) {
   return projectColumns_(sheet);
 }
 
+function ensureJiraEpicLinkColumn_(sheet, c) {
+  if (c.jiraEpicLink) return c;
+  var col = sheet.getLastColumn() + 1;
+  ensureColumnCount_(sheet, col);
+  sheet.getRange(1, col).setValue('Jira Epic Link');
+  return projectColumns_(sheet);
+}
+
 function formatTeamsValue_(teams) {
   if (Array.isArray(teams)) return teams.join(',');
   return String(teams || '').trim();
@@ -703,6 +716,7 @@ function writeProjectRow_(row, c, v) {
   setCol_(row, c.owner, v.owner);
   setCol_(row, c.teams, v.teams);
   setCol_(row, c.link, v.link);
+  if (v.hasJiraEpicLink) setCol_(row, c.jiraEpicLink, v.jiraEpicLink);
   if (v.progress !== '') setCol_(row, c.progress, v.progress);
 }
 
@@ -743,6 +757,7 @@ function addProject_(body) {
   }
   if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
   if (v.progress !== '') c = ensureProgressColumn_(sheet, c);
+  if (v.jiraEpicLink) c = ensureJiraEpicLinkColumn_(sheet, c);
 
   var row = buildEmptyRow_(sheet);
   writeProjectRow_(row, c, v);
@@ -758,6 +773,7 @@ function updateProject_(body) {
   var v = projectValues_(body);
   if (v.confidence) c = ensureConfidenceColumn_(sheet, c);
   if (v.progress !== '') c = ensureProgressColumn_(sheet, c);
+  if (v.jiraEpicLink) c = ensureJiraEpicLinkColumn_(sheet, c);
 
   var rowIndex = findProjectRow_(sheet, c, v.domain, v.id);
   if (rowIndex < 0) throw new Error('ID not found: ' + v.id);
