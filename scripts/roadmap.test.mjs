@@ -238,8 +238,11 @@ const progressData = {
     progressItem("Ninety", "In Progress", 90),
     progressItem("Half at risk", "At Risk", 50),
     progressItem("Zero", "In Progress", 0),
-    progressItem("Future stale", "Future", 40),
+    progressItem("NUR2", "Future", 100),
+    progressItem("NE7", "Future", 80),
+    progressItem("NURr", "Future", 70),
     progressItem("Done stale", "Done", 10),
+    progressItem("Blank status", "", 60),
   ],
 };
 
@@ -260,11 +263,14 @@ const fillRatio = (name, bar, fill) => page.locator(bar).filter({ hasText: new R
     return Math.round((f.getBoundingClientRect().width / track.clientWidth) * 100);
   }, fill);
 
-test("timeline bars fill with light blue to the saved progress for started work", async () => {
+test("timeline bars fill with light blue to the saved progress for trackable work", async () => {
   await renderProgress(Grid);
   assert.equal(await fillRatio("Ninety", ".initiative", ".initiative__progress"), 90);
   assert.equal(await fillRatio("Half at risk", ".initiative", ".initiative__progress"), 50);
-  for (const name of ["Zero", "Future stale", "Done stale"]) {
+  for (const [name, expected] of [["NUR2", 100], ["NE7", 80], ["NURr", 70]]) {
+    assert.equal(await fillRatio(name, ".initiative", ".initiative__progress"), expected, name);
+  }
+  for (const name of ["Zero", "Done stale", "Blank status"]) {
     assert.equal(await fillRatio(name, ".initiative", ".initiative__progress"), null, name);
   }
   const fill = await page.locator(".initiative__progress").first().evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -273,11 +279,15 @@ test("timeline bars fill with light blue to the saved progress for started work"
   assert.equal(name, "relative", "label stays above the fill");
 });
 
-test("board cards show a progress strip for started work only", async () => {
+test("board cards show a progress strip for trackable work only", async () => {
   await renderProgress(Board);
   assert.equal(await fillRatio("Ninety", ".board-card", ".board-card__progress-fill"), 90);
   assert.equal(await page.locator(".board-card", { hasText: "Ninety" }).locator("[role=progressbar]").getAttribute("aria-valuenow"), "90");
-  for (const name of ["Zero", "Future stale", "Done stale"]) {
+  for (const [name, expected] of [["NUR2", 100], ["NE7", 80], ["NURr", 70]]) {
+    assert.equal(await fillRatio(name, ".board-card", ".board-card__progress-fill"), expected, name);
+  }
+  assert.equal(await page.locator(".board-card", { hasText: "NE7" }).locator("[role=progressbar]").getAttribute("aria-valuenow"), "80");
+  for (const name of ["Zero", "Done stale", "Blank status"]) {
     assert.equal(await fillRatio(name, ".board-card", ".board-card__progress-fill"), null, name);
   }
 });
@@ -294,7 +304,9 @@ test("progress parsing and form validation accept only whole percents 0-100", as
   assert.equal(utils.displayProgress({ status: "In Progress" }), 0);
   assert.equal(utils.isProgressTrackable("In Progress"), true);
   assert.equal(utils.isProgressTrackable("Close to done"), true);
-  for (const status of ["Done", "Future", ""]) assert.equal(utils.isProgressTrackable(status), false, status);
+  assert.equal(utils.isProgressTrackable("Future"), true);
+  assert.equal(utils.isProgressTrackable("Done"), false);
+  assert.equal(utils.isProgressTrackable(""), false);
 
   const { validateInitiativeForm } = await server.ssrLoadModule("/src/services/sheetsApi.js");
   const base = {
