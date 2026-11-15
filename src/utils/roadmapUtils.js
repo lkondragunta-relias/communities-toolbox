@@ -127,10 +127,10 @@ export function isAtRiskStatus(status) {
   return /risk/i.test(String(status || ""));
 }
 
-/** Started but unfinished work: Done implies 100%, Future/blank implies not started. */
+/** Non-empty unfinished statuses can show saved progress; Done implies 100%. */
 export function isProgressTrackable(status) {
   const s = String(status || "").trim();
-  return Boolean(s) && !isDoneStatus(s) && !/^future$/i.test(s);
+  return Boolean(s) && !isDoneStatus(s);
 }
 
 /** Whole-number percent 0-100, or null when the value is not a valid percentage. */
