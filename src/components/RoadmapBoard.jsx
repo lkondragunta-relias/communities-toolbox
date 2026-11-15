@@ -84,7 +84,11 @@ function BoardCard({ item, domain, statuses, overdue, canEdit, onSelect, onToggl
     >
       <div className="board-card__top">
         <DoneToggle item={item} domain={domain} onToggle={canEdit ? onToggleDone : undefined} />
-        <span className="board-card__name">{item.name}</span>
+        <span
+          className={`board-card__name${String(item.jiraEpicLink || "").trim() ? " board-card__name--epic-linked" : ""}`}
+        >
+          {item.name}
+        </span>
       </div>
       <div className="board-card__meta">
         <span className="board-card__when">{formatQuarterRange(item.timeline)}</span>
