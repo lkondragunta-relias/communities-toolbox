@@ -27,6 +27,7 @@ Interactive product roadmap viewer built with React and Vite. Initiative data li
   - [How the dashboard reads a row](#how-the-dashboard-reads-a-row)
   - [Using the view](#using-the-view)
 - [Communities Eng & Product Organization](#communities-eng--product-organization)
+- [Milestones](#milestones)
 - [Feedback collection](#feedback-collection)
 - [Repository skills](#repository-skills)
 - [Adding a cohort (step-by-step)](#adding-a-cohort-step-by-step)
@@ -90,6 +91,178 @@ window, sized by how long it actually lasted. See
 The page title and cohort filter labels are defined in the app (`src/config/roadmapDefaults.js`), not in the spreadsheet. Team tabs and initiative rows come entirely from Google Sheets.
 
 **Stack:** React 19, Vite 8, Google Apps Script (backend), GitHub Pages (optional deployment).
+
+## Milestones
+
+`#/milestones` is the completed-achievement history, not another roadmap.
+It defaults to the current calendar year and orders achievements by year,
+quarter and date, latest first. Dates stay on the timeline rail. Cards show
+their roadmap domains first, then title and one short impact sentence.
+Choose one or several domains, a year (including **All years**) and a quarter.
+Domain selection uses OR matching, so a milestone shared by two selected
+domains is still counted once. Details are addressable at
+`#/milestones/<milestone-id>`.
+
+**Upcoming / Planned** is separate and respects the same filters. Planned is
+an explicit status: passing its date never changes it to Completed. Current-year
+filters can hide next year's plans; **Explore all years** changes only the
+period filters and retains the selected domains. Dates are Gregorian
+`YYYY-MM-DD` strings, not instants. Quarter boundaries and displayed dates do
+not shift with the viewer's time zone.
+
+### Workbook schema and domain source
+
+Use one new tab named exactly **Milestones**, with these ten headers in this
+order. Additional owner columns may follow them; API updates do not overwrite
+those additional cells. Existing incompatible headers are never repaired or
+replaced automatically.
+
+| Header | Contract |
+| --- | --- |
+| ID | Server-generated `MS-<UUID>`, immutable |
+| Domain IDs | One or more canonical roadmap domain IDs, comma-separated in the cell |
+| Title | Required plain text, at most 160 characters |
+| Date | Required real calendar date, `YYYY-MM-DD`, years 1000 through 9999 |
+| Status | Exactly `Completed` or `Planned` |
+| Impact | Required short plain-text sentence, at most 300 characters |
+| Details | Optional plain text, at most 5,000 characters |
+| Links | Optional HTTPS evidence URLs, one per line, up to 8, each at most 1,000 characters |
+| Created At | Server-maintained ISO UTC timestamp, immutable |
+| Updated At | Server-maintained ISO UTC timestamp and optimistic revision |
+
+The sole domain vocabulary is the existing roadmap **Domains** tab, never
+the organization or incident domain lists. Exact `Domains` takes precedence;
+otherwise a single unambiguous tab containing `domain`, excluding organization
+and incident tabs, is accepted for existing workbook naming conventions.
+Do not rename/delete canonical IDs outside the API. Domain deletion is refused
+when either a milestone or an unconfirmed milestone write references it.
+Duplicate IDs, orphan associations and malformed milestone rows are explicit
+errors, not silently skipped history.
+
+New values use text-formatted cells. As in the organization editor, free-text
+values starting with `=`, `+`, `-`, `@` or an apostrophe are rejected after
+trimming, as are unsafe control characters. Evidence URLs must use HTTPS,
+have a valid DNS-style host and optional port, and contain no credentials,
+spaces, backslashes or raw markup characters. Evidence is rendered as ordinary
+links with `noopener noreferrer`; details are text, not executable HTML.
+
+### API, confirmation and retries
+
+Public `GET ?action=milestones` returns:
+
+```json
+{
+  "domains": [{ "id": "domain-id", "name": "Domain name" }],
+  "milestones": { "version": 1, "configured": true, "items": [] }
+}
+```
+
+`configured: true` and `items: []` mean a configured, empty history.
+`configured: false` means the new backend is present but the tab has not been
+set up. A missing version means the backend does not support Milestones.
+Schema, HTTP, JSON, network and stale-refresh failures are displayed explicitly.
+Milestones refreshes its dedicated endpoint on entry rather than treating an old
+roadmap cache as current support. The combined roadmap payload and its
+normalization/cache retain the milestone envelope without treating it as a
+project domain.
+
+Protected POST actions use the existing `adminToken` check and script-wide
+write lock:
+
+- `setupMilestones`: accepts only `action` and `adminToken`; creates the empty
+  tab and headers only, or verifies an existing compatible tab. Never seeds rows.
+- `addMilestone`: accepts `requestId`, `domainIds` (an array), `title`, `date`,
+  `status`, `impact`, and optional `details` / `links` (an array).
+- `updateMilestone`: the same complete editable record plus `id` and mandatory
+  `expectedUpdatedAt`. This is replacement of editable fields, not a partial
+  patch; omitted optional fields become empty. ID and Created At cannot change.
+- `deleteMilestone`: only `id`, `expectedUpdatedAt` and `requestId`, besides
+  authentication and action. The UI requires explicit confirmation and explains
+  that deletion removes the achievement from every linked domain.
+
+Every write rejects unknown fields. Creates, updates and deletes carry a UUID
+`requestId`. Before touching a row the server durably reserves the generated
+identity/revision and a normalized request fingerprint in Script Properties
+under `MILESTONE_REQUEST_<requestId>`. It flushes and verifies actual sheet
+readback before confirming. A receipt contains `ok`, `milestonesVersion: 1`,
+the original action/request ID, the stable milestone ID, `updatedAt`, and
+`deleted`. The browser validates this contract. A failed refresh after a
+confirmed receipt says the write succeeded but the list could not refresh.
+
+The same request can be replayed safely after a timeout, lost response or
+receipt-write failure, including after a later edit or deletion. A reused
+request ID with different content is rejected. Pending writes block conflicting
+mutations of that milestone until the original request is confirmed. Updates
+and deletes compare the expected revision under the lock; stale clients never
+overwrite a newer API revision. Do not edit rows directly: manual changes that
+leave Updated At unchanged bypass API revision tracking.
+
+The browser stores the pending request, **without the admin token**, in
+session storage scoped to this backend. Closing a panel, changing routes or
+reloading the same tab retains its identity and payload. An uncertain result
+locks the draft and exposes **Retry original request**. Do not close the browser
+tab or start a replacement write while confirmation is pending. Rejected
+authentication, validation and stale-revision requests preserve the editable
+draft; once a server identity is reserved, later failures are explicitly
+unconfirmed instead. Storage failures block new writes rather than risking a
+duplicate. Never clear pending request storage or server journals merely to
+make an error disappear.
+
+**Journal capacity:** this keeps the approved single new workbook tab without
+adding an audit/receipt sheet. Script Properties has bounded capacity; writes
+stop explicitly at a conservative 450,000-byte estimate including other script
+properties. No old receipts are automatically evicted. Before that ceiling is
+reached, an owner must review a durable archival/storage migration that
+preserves old request identities. This is a rollout consideration, not a reason
+to delete deduplication history. Pending records contain IDs, timestamps and a
+fingerprint, not the admin token or the achievement text.
+
+### Controlled backend rollout
+
+This repository change does **not** create a live tab or deploy Apps Script.
+Merging to `main` can trigger the existing Pages workflow, so backend review
+and deployment must happen first under owner control.
+
+1. Compare the live script with the reviewed `scripts/google-apps-script/Code.gs`
+   patch without replacing properties, credentials or unrelated live logic.
+   The milestone block, `doGet`, `doPost` / `doPostLocked_`, `readRoadmap_`,
+   canonical roadmap domain lookup/read/add/delete helpers, and the Milestones
+   entry in `FEEDBACK_PAGES` are the milestone integration points. Retain
+   live-only helpers without copying or running their embedded data. Reconcile
+   project writes too: keep `updateProject_`'s existing confidence when the
+   request omits that field, allow explicit empty confidence to clear it, and
+   retain strict `normalizeProgress_` validation plus first-write Progress
+   column creation in `addProject_` / `updateProject_`.
+2. Verify in a **separate test workbook/deployment**, using synthetic records.
+   Confirm old project/feedback/org operations still work, all four milestone
+   actions require admin authorization, ordinary GET never creates a tab,
+   setup is repeatable and refuses incompatible headers, and no demo rows enter
+   the sheet.
+3. Exercise shared-domain filtering, calendar/leap-day boundaries (including
+   native date cells in a workbook time zone different from the script/viewer),
+   concurrent creates, duplicate retries before/after a lost response, stale
+   edits/deletes, failed readback/receipts, and pending-domain deletion guards.
+   Verify extra owner columns and unrelated tabs are unchanged.
+4. After review and explicit deployment approval, publish a new version of the
+   **existing** Apps Script Web App, preserving its URL, access settings and
+   existing properties. Confirm `GET ?action=milestones` returns version 1 and
+   `configured: false` before setup.
+5. With explicit sheet-change approval, run `setupMilestonesSheet` once from
+   the bound Apps Script editor, or call authenticated `setupMilestones`.
+   It takes the write lock and creates only the empty **Milestones** tab and
+   headers. Confirm version 1, `configured: true`, and zero history rows.
+6. Only then authorize the frontend release. Verify empty history, admin CRUD,
+   shared-domain filters and Feedback from the Milestones route. Historical
+   backfill is a separate approved data action, not part of setup.
+
+Local mode uses IndexedDB, its actual local roadmap domains and clearly
+synthetic `[Demo]` milestones. Version 13 adds milestone and request stores
+without changing projects, feedback or organization records. No synthetic
+milestone is sent to a remote sheet. `npm run test:milestones` covers the
+server contract, retries/readback, frontend filters/forms, API-state errors,
+local transactions, keyboard behavior and narrow layout. Set
+`MILESTONE_EVIDENCE_DIR` to an existing absolute directory to save synthetic
+overview, detail and narrow dark-theme screenshots during that test.
 
 ## Feedback collection
 

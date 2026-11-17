@@ -15,6 +15,7 @@ import { DEFAULT_ORG_ROLES, DEFAULT_ORGANIZATIONS, ORG_FIELDS, ORG_CATEGORIES, v
 import { plainSkillText, profileSnapshot, resolveOrgSkills, validatePersonProfile } from "../utils/orgSkills.js";
 import { feedbackPageUrl, validateFeedback } from "../config/feedbackConfig.js";
 import { parseProgress } from "../utils/roadmapUtils.js";
+import { validateMilestoneRequest } from "../config/milestoneConfig.js";
 
 export const LOCAL_ADMIN_TOKEN =
   (import.meta.env.VITE_LOCAL_ADMIN_TOKEN || "local-dev").trim();
@@ -144,6 +145,61 @@ db.version(11).stores({
 });
 
 db.version(12).stores({ feedback: "id, &requestId" });
+
+db.version(13).stores({ milestones: "id, date, status, *domainIds", milestoneRequests: "requestId" })
+  .upgrade(async tx => {
+    await tx.table("milestones").bulkAdd(demoMilestones(await tx.table("domains").toArray()));
+  });
+
+function demoMilestones(domains) {
+  if (!domains.length) return [];
+  const year = new Date().getFullYear();
+  const stamp = new Date().toISOString();
+  const ids = domains.slice(0, 2).map(d => d.id).sort();
+  return [
+    { domainIds: ids, title: "[Demo] A shared release", date: `${year}-09-16`, status: "Completed", impact: "Synthetic example of an achievement shared across domains." },
+    { domainIds: [domains[0].id], title: "[Demo] Search experience refreshed", date: `${year}-10-22`, status: "Completed", impact: "Synthetic example impact, not a verified delivery." },
+    { domainIds: [domains.at(-1).id], title: "[Demo] A new experience launched", date: `${year}-07-09`, status: "Completed", impact: "Synthetic launch to explore the timeline and filters." },
+    { domainIds: [domains[0].id], title: "[Demo] Earlier foundations", date: `${year - 1}-06-19`, status: "Completed", impact: "Synthetic historical achievement remains available in All years." },
+    { domainIds: ids, title: "[Demo] A future chapter", date: `${year + 1}-03-15`, status: "Planned", impact: "Synthetic plan, not a delivery commitment." },
+    { domainIds: [domains[0].id], title: "[Demo] Awaiting confirmation", date: `${year}-02-05`, status: "Planned", impact: "Past planned dates stay Planned until explicitly changed." },
+  ].map(item => ({ id: `MS-${crypto.randomUUID()}`, ...item, details: "Synthetic local demo data only.", links: [], createdAt: stamp, updatedAt: stamp }));
+}
+
+export async function getLocalMilestoneData() {
+  const [domains, items] = await Promise.all([db.domains.toArray(), db.milestones.toArray()]);
+  return { domains, milestones: { version: 1, configured: true, items } };
+}
+
+async function writeLocalMilestone(payload) {
+  return db.transaction("rw", db.domains, db.milestones, db.milestoneRequests, async () => {
+    const previous = await db.milestoneRequests.get(String(payload.requestId || "").toLowerCase());
+    const domains = await db.domains.toArray();
+    const choices = previous ? [...domains, ...previous.domainIds.map(id => ({ id }))] : domains;
+    const input = validateMilestoneRequest(payload, choices);
+    const fingerprint = JSON.stringify(input);
+    if (previous) {
+      if (previous.fingerprint !== fingerprint) throw new Error("This request ID belongs to a different milestone operation.");
+      return previous.receipt;
+    }
+    const current = input.id ? await db.milestones.get(input.id) : null;
+    if (input.action !== "addMilestone" && (!current || current.updatedAt !== input.expectedUpdatedAt)) {
+      throw Object.assign(new Error("Milestone changed since it was opened. Refresh before editing."), { code: "CONFLICT" });
+    }
+    const updatedAt = new Date(Math.max(Date.now(), current ? Date.parse(current.updatedAt) + 1 : 0)).toISOString();
+    const id = current?.id || `MS-${crypto.randomUUID()}`;
+    if (input.action === "deleteMilestone") {
+      await db.milestones.delete(id);
+    } else {
+      const { action, requestId, expectedUpdatedAt, ...fields } = input;
+      void action; void requestId; void expectedUpdatedAt;
+      await db.milestones.put({ ...fields, id, createdAt: current?.createdAt || updatedAt, updatedAt });
+    }
+    const receipt = { ok: true, milestonesVersion: 1, requestId: input.requestId, action: input.action, id, updatedAt, deleted: input.action === "deleteMilestone" };
+    await db.milestoneRequests.add({ requestId: input.requestId, fingerprint, domainIds: input.domainIds || current.domainIds, receipt });
+    return receipt;
+  });
+}
 
 async function addLocalFeedback(payload) {
   const input = validateFeedback(payload);
@@ -310,6 +366,7 @@ const SEED_INCIDENTS = [
 ];
 
 db.on("populate", () => {
+  db.milestones.bulkAdd(demoMilestones(SEED_DOMAINS));
   db.orgTeams.bulkAdd(SEED_TEAMS.map((team) => ({ ...team })));
   db.orgDomains.bulkAdd(SEED_DOMAINS.map((domain, index) => ({ ...domain, order: index + 1 })));
   db.orgRoles.bulkAdd(DEFAULT_ORG_ROLES.map((row) => ({ ...row })));
@@ -375,6 +432,7 @@ export async function getRoadmap() {
     domain: s.domain || s.url || "",
   }));
   payload.incidents = incidents.map((i) => ({ ...i }));
+  payload.milestones = (await getLocalMilestoneData()).milestones;
   payload.org = await readLocalOrg();
   payload.cookiebotReports = reports.map((r) => ({
     site: r.site || "",
@@ -625,6 +683,7 @@ async function updateIncidentRow(payload) {
 /** Mirror of the remote POST handler; mutates the DB. (Local mode has no auth.) */
 export async function postToLocal(payload) {
   const action = String(payload.action || "add").trim().toLowerCase();
+  if (["addmilestone", "updatemilestone", "deletemilestone"].includes(action)) return writeLocalMilestone(payload);
   if (action === "submitfeedback") return addLocalFeedback(payload);
   if (["saveorgassignment", "deleteorgassignment", "saveorgrole", "saveorgorganization", "saveorgdomain", "saveorgteam", "deleteorgdomain", "saveorgpersonprofile", "saveorgskill", "deleteorgskill"].includes(action)) {
     return writeLocalOrg(payload);
@@ -810,21 +869,26 @@ export async function createDomain(name) {
   if (!clean) throw new Error("Domain name is required.");
   const id = slug(clean);
   if (!id) throw new Error("Domain name must contain letters or numbers.");
-  if (id === "org") throw new Error('"Org" is a reserved domain name.');
+  if (["org", "milestones"].includes(id)) throw new Error(`"${clean}" is a reserved domain name.`);
   if (await db.domains.get(id)) throw new Error(`Domain already exists: ${clean}`);
   await db.domains.add({ id, name: clean });
   return id;
 }
 
 export async function deleteDomain(id) {
-  if (await db.orgAssignments.where("domain").equals(id).count()) {
-    throw new Error("Cannot delete domain: remove its Prod Eng Org assignments first.");
-  }
-  const count = await projectsUsingDomain(id);
-  if (count > 0) {
-    throw new Error(`Cannot delete: ${count} project(s) still use this domain.`);
-  }
-  await db.domains.delete(id);
+  return db.transaction("rw", db.orgAssignments, db.projects, db.domains, db.milestones, async () => {
+    if (await db.milestones.where("domainIds").equals(id).count()) {
+      throw new Error("Cannot delete domain: remove it from its milestones first.");
+    }
+    if (await db.orgAssignments.where("domain").equals(id).count()) {
+      throw new Error("Cannot delete domain: remove its Prod Eng Org assignments first.");
+    }
+    const count = await projectsUsingDomain(id);
+    if (count > 0) {
+      throw new Error(`Cannot delete: ${count} project(s) still use this domain.`);
+    }
+    await db.domains.delete(id);
+  });
 }
 
 export function listTeams() {

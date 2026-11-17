@@ -141,6 +141,51 @@ test("Apps Script persists optional Jira epic links and reads blank or legacy va
   assert.equal(legacy.readProjects()[0].jiraEpicLink, "");
 });
 
+test("Apps Script preserves omitted confidence, clears explicit empty confidence, and keeps independent progress", () => {
+  const { post, rows } = backend();
+  const { id } = post(input({ confidence: "Likely", progress: 35 }));
+  const confidence = rows[0].indexOf("Confidence"), progress = rows[0].indexOf("Progress");
+  assert.equal(post(input({ action: "update", id, name: "Older client update" })).ok, true);
+  assert.equal(rows[1][confidence], "Likely");
+  assert.equal(rows[1][progress], 35);
+  assert.equal(post(input({ action: "update", id, progress: 0 })).ok, true);
+  assert.equal(rows[1][confidence], "Likely");
+  assert.equal(rows[1][progress], 0);
+  assert.equal(post(input({ action: "update", id, confidence: "", progress: "" })).ok, true);
+  assert.equal(rows[1][confidence], "");
+  assert.equal(rows[1][progress], 0);
+  assert.equal(post(input({ action: "update", id, confidence: " exploring ", progress: "75%" })).ok, true);
+  assert.equal(rows[1][confidence], "Exploring");
+  assert.equal(rows[1][progress], 75);
+});
+
+test("Apps Script rejects invalid progress before mutation and creates a missing column only for valid populated progress", () => {
+  for (const action of ["add", "update"]) {
+    const { post, rows } = backend();
+    const { id } = post(input({ confidence: "Committed" }));
+    for (const row of rows) row.splice(headers.indexOf("Progress"), 1);
+    rows[0].push("Owner notes");
+    rows[1].push("Preserve this cell");
+    const before = JSON.stringify(rows);
+    for (const progress of [-1, 101, 12.5, "invalid", "12bad", true, {}, [], "   "]) {
+      assert.match(post(input({ action, ...(action === "update" ? { id } : {}), progress })).error, /whole number/);
+      assert.equal(JSON.stringify(rows), before);
+    }
+    for (const progress of ["", null, undefined]) {
+      assert.equal(post(input({ action, ...(action === "update" ? { id } : {}), progress })).ok, true);
+      assert.equal(rows[0].includes("Progress"), false);
+    }
+    for (const progress of [0, "25%", 100]) {
+      assert.equal(post(input({ action, ...(action === "update" ? { id } : {}), progress })).ok, true);
+      assert.equal(rows[0].filter(header => header === "Progress").length, 1);
+      const target = action === "update" ? rows[1] : rows.at(-1);
+      assert.equal(target[rows[0].indexOf("Progress")], Number(String(progress).replace("%", "")));
+      assert.equal(rows[1][rows[0].indexOf("Owner notes")], "Preserve this cell");
+      assert.equal(rows[1][rows[0].indexOf("Confidence")], "Committed");
+    }
+  }
+});
+
 let server;
 let browser;
 before(async () => {

@@ -16,6 +16,7 @@ import { RoadmapLegend } from "./components/RoadmapBits";
 import ProjectsTable from "./components/ProjectsTable";
 import OverviewView from "./components/views/OverviewView";
 import IncidentsView from "./components/views/IncidentsView";
+import MilestonesView from "./components/views/MilestonesView";
 import SitesView from "./components/views/SitesView";
 import OrgView from "./components/views/OrgView";
 import SettingsView from "./components/views/SettingsView";
@@ -57,7 +58,7 @@ import {
 const VIEW_TITLES = Object.fromEntries(ROUTES.map((r) => [r.id, r.title]));
 
 /** Views that own their own header actions, so the topbar Add button hides. */
-const SELF_MANAGED_VIEWS = new Set(["incidents", "sites", "org", "settings"]);
+const SELF_MANAGED_VIEWS = new Set(["incidents", "milestones", "sites", "org", "settings"]);
 
 const SIDEBAR_STORAGE_KEY = "roadmap_sidebar_collapsed";
 const ROADMAP_MODE_KEY = "roadmap_layout";
@@ -621,6 +622,15 @@ export default function App() {
                 data={data}
                 onSelectProject={handleSelectProject}
                 onNavigate={navigate}
+              />
+            ) : view === "milestones" ? (
+              <MilestonesView
+                adminUnlocked={adminUnlocked}
+                adminToken={adminToken}
+                onUnlock={handleAdminUnlock}
+                onLock={handleAdminLock}
+                selectedId={params[0] || null}
+                onSelectId={id => id ? navigate("milestones", [id]) : replace("milestones")}
               />
             ) : view === "incidents" ? (
               <IncidentsView

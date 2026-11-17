@@ -28,8 +28,9 @@
  * type there plus a cause column for it needs no change here.
  *
  * The browser app reads GET (returns the flat JSON below) and writes via POST
- * with { action, adminToken, ... }. Column order is flexible — columns are
- * matched by header name, not position.
+ * with { action, adminToken, ... }. Column order is flexible except for the
+ * explicitly initialized Milestones tab, whose ten headers have a fixed order.
+ * See README.md for its schema and owner-controlled setup/deployment steps.
  */
 
 var DEFAULT_ADMIN_TOKEN = 'relias-2026';
@@ -45,6 +46,9 @@ function doGet(e) {
   try {
     if (e && e.parameter && e.parameter.action === 'feedbackCapabilities') {
       return jsonResponse({ ok: true, feedbackVersion: 1 });
+    }
+    if (e && e.parameter && e.parameter.action === 'milestones') {
+      return jsonResponse(milestoneData_());
     }
     return jsonResponse(readRoadmap_());
   } catch (err) {
@@ -62,7 +66,7 @@ function doPost(e) {
     acquired = true;
     return doPostLocked_(e);
   } catch (err) {
-    return jsonResponse({ ok: false, error: 'The server is busy. Retry the same request.' }, 503);
+    return jsonResponse({ ok: false, code: 'BUSY', error: 'The server is busy. Retry the same request.' }, 503);
   } finally {
     if (acquired) lock.releaseLock();
   }
@@ -75,12 +79,16 @@ function doPostLocked_(e) {
       return jsonResponse(submitFeedback_(body));
     }
     if (!body.adminToken || body.adminToken !== getAdminToken_()) {
-      return jsonResponse({ ok: false, error: 'Invalid admin token.' }, 403);
+      return jsonResponse({ ok: false, code: 'AUTH', error: 'Invalid admin token.' }, 403);
     }
     var action = String(body.action || 'add').trim().toLowerCase();
 
     if (action === 'listfeedback') return jsonResponse(listFeedback_(body));
     if (action === 'updatefeedback') return jsonResponse(updateFeedback_(body));
+    if (action === 'setupmilestones') return jsonResponse(setupMilestones_(body));
+    if (['addmilestone', 'updatemilestone', 'deletemilestone'].indexOf(action) >= 0) {
+      return jsonResponse(writeMilestone_(body));
+    }
 
     if (action === 'add') return jsonResponse(addProject_(body));
     if (action === 'update') return jsonResponse(updateProject_(body));
@@ -121,7 +129,7 @@ function doPostLocked_(e) {
 
     return jsonResponse({ ok: false, error: 'Unknown action: ' + action }, 400);
   } catch (err) {
-    return jsonResponse({ ok: false, error: String(err && err.message || err) }, 400);
+    return jsonResponse({ ok: false, code: err.milestoneCode || undefined, error: String(err && err.message || err) }, 400);
   }
 }
 
@@ -130,12 +138,261 @@ function getAdminToken_() {
   return fromProps || DEFAULT_ADMIN_TOKEN;
 }
 
+/* =============================== Milestones =============================== */
+
+var MILESTONE_HEADERS = ['ID', 'Domain IDs', 'Title', 'Date', 'Status', 'Impact', 'Details', 'Links', 'Created At', 'Updated At'];
+var MILESTONE_REQUEST_PREFIX = 'MILESTONE_REQUEST_';
+var MILESTONE_ACTIONS = ['addMilestone', 'updateMilestone', 'deleteMilestone'];
+
+function milestoneError_(message, code) {
+  var error = new Error(message);
+  error.milestoneCode = code || 'INVALID';
+  return error;
+}
+
+function milestoneDate_(value) {
+  if (typeof value !== 'string' || !/^[1-9]\d{3}-\d{2}-\d{2}$/.test(value)) return false;
+  var parts = value.split('-').map(Number), year = parts[0], month = parts[1], day = parts[2];
+  var leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return month >= 1 && month <= 12 && day >= 1 &&
+    day <= [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+}
+
+function milestoneTimestamp_(value) {
+  return typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) &&
+    isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+}
+
+function milestoneText_(value, field, limit, required) {
+  if (typeof value !== 'string' || value.length > limit) throw milestoneError_('Invalid ' + field + '. Maximum ' + limit + ' characters.');
+  var result = value.trim();
+  if (required && !result) throw milestoneError_(field + ' is required.');
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value) || /^[=+\-@']/.test(result)) {
+    throw milestoneError_(field + ' must be plain text and cannot start with =, +, -, @ or an apostrophe.');
+  }
+  return result;
+}
+
+function milestoneFields_(body, domains) {
+  if (!Array.isArray(body.domainIds) || !body.domainIds.length || body.domainIds.length > 30 ||
+      body.domainIds.some(function (id, index) {
+        return typeof id !== 'string' || body.domainIds.indexOf(id) !== index ||
+          !domains.some(function (domain) { return domain.id === id; });
+      })) throw milestoneError_('Choose one or more distinct roadmap domains.');
+  if (!milestoneDate_(body.date)) throw milestoneError_('Enter a real calendar date as YYYY-MM-DD.');
+  if (['Completed', 'Planned'].indexOf(body.status) < 0) throw milestoneError_('Choose Completed or Planned.');
+  var links = body.links === undefined ? [] : body.links;
+  if (!Array.isArray(links) || links.length > 8 || links.some(function (link) {
+    if (typeof link !== 'string' || link.length > 1000 || /[\s\\<>"`\u0000-\u001f\u007f]/.test(link)) return true;
+    var match = /^https:\/\/([a-z0-9.-]+)(?::([0-9]{1,5}))?(?:[/?#].*)?$/i.exec(link);
+    return !match || match[1].length > 253 || match[2] && Number(match[2]) > 65535 ||
+      !match[1].split('.').every(function (label) { return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label); });
+  })) throw milestoneError_('Use up to 8 HTTPS evidence URLs, each at most 1,000 characters, without credentials or spaces.');
+  return {
+    domainIds: body.domainIds.slice().sort(), title: milestoneText_(body.title, 'title', 160, true),
+    date: body.date, status: body.status, impact: milestoneText_(body.impact, 'impact', 300, true),
+    details: milestoneText_(body.details === undefined ? '' : body.details, 'details', 5000, false),
+    links: links.filter(function (link, index) { return links.indexOf(link) === index; }),
+  };
+}
+
+function milestoneRequest_(body, domains) {
+  var adding = body.action === 'addMilestone', deleting = body.action === 'deleteMilestone';
+  var allowed = ['action', 'adminToken', 'requestId'].concat(adding ? [] : ['id', 'expectedUpdatedAt'])
+    .concat(deleting ? [] : ['domainIds', 'title', 'date', 'status', 'impact', 'details', 'links']);
+  if (MILESTONE_ACTIONS.indexOf(body.action) < 0 || Object.keys(body).some(function (key) { return allowed.indexOf(key) < 0; })) {
+    throw milestoneError_('Unexpected milestone field or action.');
+  }
+  if (typeof body.requestId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.requestId)) {
+    throw milestoneError_('Invalid milestone request ID.');
+  }
+  if (!adding && (typeof body.id !== 'string' || !/^MS-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(body.id) ||
+      !milestoneTimestamp_(body.expectedUpdatedAt))) throw milestoneError_('A milestone ID and expected revision are required. Refresh before editing.');
+  var input = { action: body.action, requestId: body.requestId.toLowerCase() };
+  if (!adding) { input.id = body.id; input.expectedUpdatedAt = body.expectedUpdatedAt; }
+  if (!deleting) {
+    var fields = milestoneFields_(body, domains);
+    Object.keys(fields).forEach(function (key) { input[key] = fields[key]; });
+  }
+  return input;
+}
+
+function milestoneSheet_() {
+  var sheet = ss_().getSheetByName('Milestones');
+  if (!sheet) return null;
+  var headers = sheet.getLastRow() ? sheet.getRange(1, 1, 1, Math.max(sheet.getLastColumn(), MILESTONE_HEADERS.length)).getValues()[0] : [];
+  if (MILESTONE_HEADERS.some(function (header, index) { return headers[index] !== header || headers.indexOf(header, index + 1) >= 0; })) {
+    throw milestoneError_('Milestones headers do not match. Ask the owner to review the schema; no automatic repair was attempted.', 'SCHEMA');
+  }
+  return sheet;
+}
+
+function milestoneDomains_() {
+  var domains = readDomains_(), seen = {};
+  domains.forEach(function (domain) {
+    if (!domain.id || domain.id.length > 80 || /[,\s]/.test(domain.id) ||
+        /^[=+\-@']/.test(domain.id) || !domain.name || seen[domain.id]) {
+      throw milestoneError_('Roadmap Domains contains an invalid or duplicate ID. Review the Domains tab.', 'SCHEMA');
+    }
+    seen[domain.id] = true;
+  });
+  return domains;
+}
+
+function milestoneRows_(sheet, domains) {
+  if (!sheet || sheet.getLastRow() < 2) return [];
+  var seen = {};
+  return sheet.getRange(2, 1, sheet.getLastRow() - 1, MILESTONE_HEADERS.length).getValues()
+    .map(function (row, index) { return { row: row, number: index + 2 }; })
+    .filter(function (entry) { return entry.row.some(function (value) { return value !== ''; }); })
+    .map(function (entry) {
+      var row = entry.row;
+      var date = Object.prototype.toString.call(row[3]) === '[object Date]' ?
+        Utilities.formatDate(row[3], ss_().getSpreadsheetTimeZone(), 'yyyy-MM-dd') : row[3];
+      var fields = milestoneFields_({
+        domainIds: typeof row[1] === 'string' ? row[1].split(',').map(function (id) { return id.trim(); }) : [],
+        title: row[2], date: date, status: row[4], impact: row[5], details: row[6],
+        links: typeof row[7] === 'string' && row[7] ? row[7].split('\n') : [],
+      }, domains);
+      if (typeof row[0] !== 'string' || !/^MS-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row[0]) ||
+          seen[row[0].toLowerCase()] || !milestoneTimestamp_(row[8]) || !milestoneTimestamp_(row[9]) || row[9] < row[8]) {
+        throw milestoneError_('Invalid or duplicate Milestones record at row ' + entry.number + '. Review the sheet before writing.', 'SCHEMA');
+      }
+      seen[row[0].toLowerCase()] = true;
+      var item = { id: row[0] };
+      Object.keys(fields).forEach(function (key) { item[key] = fields[key]; });
+      item.createdAt = row[8]; item.updatedAt = row[9];
+      return { number: entry.number, item: item };
+    });
+}
+
+function milestoneData_() {
+  var domains = milestoneDomains_(), sheet = milestoneSheet_();
+  return { milestones: { version: 1, configured: Boolean(sheet), items: milestoneRows_(sheet, domains).map(function (row) { return row.item; }) }, domains: domains };
+}
+
+function readMilestones_() {
+  try { return milestoneData_().milestones; }
+  catch (err) { return { version: 1, configured: false, items: [], error: String(err.message || err) }; }
+}
+
+function setupMilestones_(body) {
+  if (Object.keys(body).some(function (key) { return ['action', 'adminToken'].indexOf(key) < 0; })) throw milestoneError_('Unexpected setup field.');
+  var sheet = ss_().getSheetByName('Milestones');
+  if (!sheet) sheet = ss_().insertSheet('Milestones');
+  if (sheet.getLastRow() === 0) {
+    ensureColumnCount_(sheet, MILESTONE_HEADERS.length);
+    sheet.getRange(1, 1, 1, MILESTONE_HEADERS.length).setNumberFormat('@').setValues([MILESTONE_HEADERS]).setFontWeight('bold');
+    sheet.setFrozenRows(1);
+    SpreadsheetApp.flush();
+  }
+  return { ok: true, milestonesVersion: 1, configured: Boolean(milestoneSheet_()) };
+}
+
+function setupMilestonesSheet() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(20000);
+  try { return setupMilestones_({ action: 'setupMilestones' }); }
+  finally { lock.releaseLock(); }
+}
+
+function milestoneJournal_() {
+  var all = PropertiesService.getScriptProperties().getProperties(), journal = [];
+  Object.keys(all).forEach(function (key) {
+    if (key.indexOf(MILESTONE_REQUEST_PREFIX) === 0) journal.push({ key: key, value: JSON.parse(all[key]) });
+  });
+  return { all: all, entries: journal };
+}
+
+function milestoneReceipt_(record, input) {
+  return { ok: true, milestonesVersion: 1, requestId: input.requestId, action: input.action,
+    id: record.id, updatedAt: record.revision, deleted: input.action === 'deleteMilestone' };
+}
+
+function writeMilestone_(body) {
+  var properties = PropertiesService.getScriptProperties();
+  var key = MILESTONE_REQUEST_PREFIX + String(body.requestId || '').toLowerCase();
+  var saved = properties.getProperty(key), record = saved ? JSON.parse(saved) : null;
+  try {
+    var domains = record && record.done ? [] : milestoneDomains_();
+    // Completed requests remain replayable even if the workbook becomes unavailable.
+    var choices = domains.concat(record && record.done ? (record.domainIds || []).map(function (id) { return { id: id }; }) : []);
+    var input = milestoneRequest_(body, choices);
+    var fingerprint = Utilities.base64Encode(Utilities.computeDigest(
+      Utilities.DigestAlgorithm.SHA_256, JSON.stringify(input), Utilities.Charset.UTF_8
+    ));
+    if (record && record.fingerprint !== fingerprint) throw milestoneError_('This request ID belongs to a different milestone operation.');
+    if (record && record.done) return milestoneReceipt_(record, input);
+    var sheet = milestoneSheet_();
+    if (!sheet) throw milestoneError_('Milestones is not configured. The owner must explicitly set up the empty tab first.', 'NOT_CONFIGURED');
+    var rows = milestoneRows_(sheet, domains);
+    var adding = input.action === 'addMilestone', deleting = input.action === 'deleteMilestone';
+    var current = rows.filter(function (row) { return row.item.id === (record ? record.id : input.id); })[0];
+    var journal = milestoneJournal_();
+    if (record && !adding && !deleting && !current) {
+      throw milestoneError_('The unconfirmed milestone was removed outside this request. Ask the owner to review it.', 'CONFLICT');
+    }
+    if (!record) {
+      if (!adding && !current) throw milestoneError_('Milestone no longer exists. Refresh before editing.', 'CONFLICT');
+      if (!adding && current.item.updatedAt !== input.expectedUpdatedAt) throw milestoneError_('Milestone changed since it was opened. Refresh before editing.', 'CONFLICT');
+      if (!adding && journal.entries.some(function (entry) { return !entry.value.done && entry.value.id === input.id; })) {
+        throw milestoneError_('Another write for this milestone is unconfirmed. Retry that original request first.', 'CONFLICT');
+      }
+      var revision = new Date(Math.max(Date.now(), current ? Date.parse(current.item.updatedAt) + 1 : 0)).toISOString();
+      var candidate = { fingerprint: fingerprint, id: adding ? 'MS-' + Utilities.getUuid() : input.id,
+        revision: revision, createdAt: adding ? revision : current.item.createdAt,
+        domainIds: deleting ? current.item.domainIds : input.domainIds, done: false };
+      var storage = Object.keys(journal.all).reduce(function (sum, name) { return sum + name.length * 3 + String(journal.all[name]).length * 3; }, 0);
+      if (storage + JSON.stringify(candidate).length * 3 > 450000) {
+        throw milestoneError_('Milestone request history is full. Ask the owner to review storage before writing; do not clear retry history.', 'CAPACITY');
+      }
+      // Reserve identity durably before any row mutation. Never prune completed receipts automatically.
+      record = candidate;
+      properties.setProperty(key, JSON.stringify(record));
+    }
+    var item;
+    if (!deleting) {
+      item = { id: record.id };
+      var fields = milestoneFields_(input, domains);
+      Object.keys(fields).forEach(function (name) { item[name] = fields[name]; });
+      item.createdAt = record.createdAt; item.updatedAt = record.revision;
+    }
+    if (current && !adding && current.item.updatedAt !== input.expectedUpdatedAt &&
+        (!item || JSON.stringify(current.item) !== JSON.stringify(item))) {
+      throw milestoneError_('The unconfirmed milestone write needs owner review. No newer data was overwritten.', 'CONFLICT');
+    }
+    if (adding && current && JSON.stringify(current.item) !== JSON.stringify(item)) {
+      throw milestoneError_('The reserved milestone ID is already in use. Ask the owner to review it.', 'CONFLICT');
+    }
+    if (deleting) {
+      if (current) sheet.deleteRow(current.number);
+    } else if (!current || JSON.stringify(current.item) !== JSON.stringify(item)) {
+      var values = [item.id, item.domainIds.join(', '), item.title, item.date, item.status, item.impact,
+        item.details, item.links.join('\n'), item.createdAt, item.updatedAt].map(safeFeedbackCell_);
+      sheet.getRange(current ? current.number : sheet.getLastRow() + 1, 1, 1, values.length)
+        .setNumberFormat('@').setValues([values]);
+    }
+    SpreadsheetApp.flush();
+    var readback = milestoneRows_(sheet, domains).filter(function (row) { return row.item.id === record.id; })[0];
+    if (deleting ? Boolean(readback) : !readback || JSON.stringify(readback.item) !== JSON.stringify(item)) {
+      throw new Error('Milestone readback did not confirm the write. Retry the same request.');
+    }
+    record.done = true;
+    properties.setProperty(key, JSON.stringify(record));
+    return milestoneReceipt_(record, input);
+  } catch (err) {
+    // Once identity is reserved, even a schema/readback failure may follow a committed write.
+    if (record && !record.done) err.milestoneCode = 'UNCONFIRMED';
+    throw err;
+  }
+}
+
 /* ============================ Feedback writes ============================= */
 
 var FEEDBACK_CATEGORIES = ['Report a bug', 'Request a feature', 'Request a change', 'Share feedback', 'Report a data correction'];
 var FEEDBACK_PAGES = {
   overview: 'overview', timeline: 'roadmap', table: 'projects', incidents: 'operations',
-  sites: 'cookiebot', org: 'prod-eng-org', settings: 'settings',
+  sites: 'cookiebot', org: 'prod-eng-org', settings: 'settings', milestones: 'milestones',
 };
 var FEEDBACK_HEADERS = ['ID', 'Submitted At', 'Name', 'Category', 'Page', 'Page URL', 'Message', 'Status', 'Request ID', 'Request Fingerprint', 'Issue URL', 'PR URL', 'Updated At'];
 var FEEDBACK_STATUSES = ['New', 'Issue created', 'In progress', 'In review', 'Done', 'Declined', 'Needs info', 'Needs approval'];
@@ -468,6 +725,7 @@ function readRoadmap_() {
     org: readOrg_(),
     cookiebotSites: readCookiebotSites_(),
     cookiebotReports: readCookiebotReports_(),
+    milestones: readMilestones_(),
   };
 }
 
@@ -549,8 +807,19 @@ function readTeams_() {
   return out;
 }
 
+function roadmapDomainsSheet_() {
+  var exact = ss_().getSheetByName('Domains');
+  if (exact) return exact;
+  var matches = ss_().getSheets().filter(function (sheet) {
+    var name = normalize_(sheet.getName());
+    return name.indexOf('domain') >= 0 && !/\borg\b|organization|incident/.test(name);
+  });
+  if (matches.length > 1) throw new Error('Multiple roadmap Domains tabs match. Use an unambiguous Domains tab.');
+  return matches[0] || null;
+}
+
 function readDomains_() {
-  var sheet = getSheetByKeyword_('domain');
+  var sheet = roadmapDomainsSheet_();
   if (!sheet) return [];
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return [];
@@ -780,6 +1049,9 @@ function updateProject_(body) {
 
   var lastCol = sheet.getLastColumn();
   var row = sheet.getRange(rowIndex, 1, 1, lastCol).getValues()[0];
+  if (!Object.prototype.hasOwnProperty.call(body, 'confidence')) {
+    v.confidence = String(cell_(row, c.confidence) || '').trim();
+  }
   writeProjectRow_(row, c, v);
   sheet.getRange(rowIndex, 1, 1, lastCol).setValues([row]);
   return { ok: true };
@@ -881,11 +1153,12 @@ function addDomain_(body) {
   if (!name) throw new Error('Domain name is required.');
   if (!id) throw new Error('Domain id could not be derived.');
   var reserved = ['meta', 'quarters', 'teams', 'cohorts', 'statuses', 'priorities',
-    'cookiebotsites', 'cookiebotreports', 'org'];
+    'cookiebotsites', 'cookiebotreports', 'org', 'milestones'];
   if (reserved.indexOf(id) >= 0) {
     throw new Error('"' + name + '" is a reserved name - pick a different one.');
   }
-  var sheet = requireSheetByKeyword_('domain', 'Domains');
+  var sheet = roadmapDomainsSheet_();
+  if (!sheet) throw new Error('Missing roadmap Domains tab.');
   var map = headerMap_(sheet);
   var idC = colOf_(map, ['title', 'id']);
   if (findRowByValue_(sheet, idC, id) >= 0) throw new Error('Domain already exists: ' + id);
@@ -902,7 +1175,13 @@ function deleteDomain_(body) {
   if (readOrg_().assignments.some(function (row) { return normalize_(row.domain) === normalize_(id); })) {
     throw new Error('Cannot delete domain: remove its Prod Eng Org assignments first.');
   }
-  var sheet = requireSheetByKeyword_('domain', 'Domains');
+  var milestoneData = milestoneData_();
+  if (milestoneData.milestones.items.some(function (item) { return item.domainIds.indexOf(id) >= 0; }) ||
+      milestoneJournal_().entries.some(function (entry) { return !entry.value.done && (entry.value.domainIds || []).indexOf(id) >= 0; })) {
+    throw new Error('Cannot delete domain: remove it from its milestones and confirm pending milestone writes first.');
+  }
+  var sheet = roadmapDomainsSheet_();
+  if (!sheet) throw new Error('Missing roadmap Domains tab.');
   var idC = colOf_(headerMap_(sheet), ['title', 'id']);
   var rowIndex = findRowByValue_(sheet, idC, id);
   if (rowIndex < 0) throw new Error('Domain not found: ' + id);

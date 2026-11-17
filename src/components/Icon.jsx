@@ -28,6 +28,9 @@ const S = {
       <rect x="3" y="15.5" width="8" height="4" rx="2" />
     </>
   ),
+  milestones: <path d="M5 22V3h14l-3 5 3 5H5" />,
+  filter: <path d="M3 5h18M6 12h12M9 19h6" />,
+  chevronRight: <polyline points="9 5 16 12 9 19" />,
   table: (
     <>
       <rect x="3" y="4" width="18" height="16" rx="2" />

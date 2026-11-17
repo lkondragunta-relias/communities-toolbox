@@ -2,9 +2,10 @@ import { resolveStatusDefinitions } from "../config/statusConfig";
 import { resolvePriorityDefinitions, getValidPriorityLabels } from "../config/priorityConfig";
 import { getValidConfidenceLabels } from "../config/confidenceConfig";
 import { ROADMAP_DEFAULTS } from "../config/roadmapDefaults";
-import { getRoadmap as getLocalRoadmap, postToLocal } from "../db/database";
+import { getRoadmap as getLocalRoadmap, getLocalMilestoneData, postToLocal } from "../db/database";
 import { isProgressTrackable, parseProgress } from "../utils/roadmapUtils";
 import { validateFeedback, validateFeedbackReceipt } from "../config/feedbackConfig.js";
+import { validateMilestoneData, validateMilestoneReceipt } from "../config/milestoneConfig.js";
 
 function getApiUrl() {
   const url = import.meta.env.VITE_SHEETS_API_URL;
@@ -112,6 +113,7 @@ export function normalizeRemotePayload(payload) {
   if (Array.isArray(payload.cookiebotSites)) out.cookiebotSites = payload.cookiebotSites;
   if (Array.isArray(payload.cookiebotReports)) out.cookiebotReports = payload.cookiebotReports;
   if (Array.isArray(payload.incidents)) out.incidents = payload.incidents;
+  if (payload.milestones && typeof payload.milestones === "object") out.milestones = payload.milestones;
   if (payload.org && typeof payload.org === "object") out.org = payload.org;
   if (payload.incidentConfig && typeof payload.incidentConfig === "object") {
     out.incidentConfig = payload.incidentConfig;
@@ -198,6 +200,42 @@ export async function checkFeedbackSupport() {
     throw new Error("Feedback is not available yet. The Google backend needs its feedback update.");
   }
   return true;
+}
+
+export async function fetchMilestones(signal) {
+  if (isLocal()) return validateMilestoneData(await getLocalMilestoneData());
+  const apiUrl = getApiUrl();
+  if (!apiUrl) throw new Error("Milestones is unavailable because the Sheets API is not configured.");
+  const url = new URL(apiUrl);
+  url.searchParams.set("action", "milestones");
+  const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(20000)]) : AbortSignal.timeout(20000) });
+  const result = await parseJsonResponse(response);
+  if (result?.error) throw new Error(result.error);
+  return validateMilestoneData(result);
+}
+
+export function milestonePendingKey() {
+  return `milestone-pending:${getDataSource()}:${isLocal() ? "demo" : getApiUrl()}`;
+}
+
+export async function saveMilestone(request, adminToken) {
+  let result;
+  const payload = { ...request, adminToken };
+  if (isLocal()) {
+    result = await postToLocal(payload);
+  } else {
+    const apiUrl = getApiUrl();
+    if (!apiUrl) throw new Error("Milestones API is not configured.");
+    const response = await fetch(apiUrl, {
+      method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(payload), signal: AbortSignal.timeout(35000),
+    });
+    result = await parseJsonResponse(response);
+    if (result?.ok === false || result?.error) {
+      throw Object.assign(new Error(result.error || "Milestone write failed."), { code: result.code });
+    }
+  }
+  return validateMilestoneReceipt(result, request);
 }
 
 export async function submitFeedback(payload) {
