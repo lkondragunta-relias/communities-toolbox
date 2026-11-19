@@ -59,7 +59,7 @@ export default function MilestonesView({ adminUnlocked, adminToken, onUnlock, on
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const currentYear = String(new Date().getFullYear());
-  const [filters, setFilters] = useState({ year: currentYear, quarter: "all", domainIds: [] });
+  const [filters, setFilters] = useState({ year: "all", quarter: "all", domainIds: [] });
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [unlocking, setUnlocking] = useState(false);
@@ -105,8 +105,8 @@ export default function MilestonesView({ adminUnlocked, adminToken, onUnlock, on
   const groups = groupMilestones(completed);
   const selected = items.find(item => item.id === selectedId);
   const disabled = loading || Boolean(loadError) || !configured || Boolean(storageError);
-  const activeFilters = filters.domainIds.length || filters.year !== currentYear || filters.quarter !== "all";
-  function reset() { setFilters({ year: currentYear, quarter: "all", domainIds: [] }); }
+  const activeFilters = filters.domainIds.length || filters.year !== "all" || filters.quarter !== "all";
+  function reset() { setFilters({ year: "all", quarter: "all", domainIds: [] }); }
   function refresh() { load().catch(() => { /* load renders the explicit error state */ }); }
   function clearPending() {
     sessionStorage.removeItem(milestonePendingKey());

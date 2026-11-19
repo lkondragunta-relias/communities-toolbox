@@ -68,10 +68,10 @@ async function fillForm(page) {
 test("full app timeline filters shared achievements once, preserves historical years and past Planned state", async () => {
   const page = await appPage();
   try {
-    const year = String(new Date().getFullYear());
     assert.equal(await page.getByRole("button", { name: "Milestones", exact: true }).getAttribute("aria-current"), "page");
-    assert.equal(await page.getByLabel("Milestone year").inputValue(), year);
-    assert.equal(await page.locator(".milestone-card").count(), 3);
+    assert.equal(await page.getByLabel("Milestone year").inputValue(), "all");
+    assert.equal(await page.locator(".milestone-card").count(), 4);
+    assert.equal(await page.locator(".milestone-planned").count(), 2);
     assert.match(await page.locator(".milestone-quarter").first().innerText(), /Q4/);
     const names = await page.evaluate(async () => {
       const data = await (await import("/src/db/database.js")).getLocalMilestoneData();
@@ -86,18 +86,18 @@ test("full app timeline filters shared achievements once, preserves historical y
     await page.getByRole("button", { name: "Q3", exact: true }).click();
     assert.equal(await page.locator(".milestone-card").count(), 1);
     await page.getByRole("button", { name: "Reset all filters", exact: true }).click();
-    assert.equal(await page.locator(".milestone-card").count(), 3);
-    await page.getByLabel("Milestone year").selectOption("all");
     assert.equal(await page.locator(".milestone-card").count(), 4);
-    assert.equal(await page.locator(".milestone-planned").count(), 2);
-    await page.getByLabel("Milestone year").selectOption(String(Number(year) - 1));
+    await page.getByLabel("Milestone year").selectOption(String(new Date().getFullYear()));
+    assert.equal(await page.locator(".milestone-card").count(), 3);
+    assert.equal(await page.locator(".milestone-planned").count(), 1);
+    await page.getByLabel("Milestone year").selectOption(String(new Date().getFullYear() - 1));
     assert.equal(await page.locator(".milestone-card").count(), 1);
     await page.getByRole("button", { name: "Q1", exact: true }).click();
     assert.equal(await page.getByText("No achievements in this view", { exact: true }).isVisible(), true);
     await page.getByRole("button", { name: "Reset all filters", exact: true }).first().click();
     await page.getByRole("button", { name: "Q1", exact: true }).click();
-    assert.equal(await page.locator(".milestone-planned").count(), 1);
-    assert.match(await page.locator(".milestone-planned").innerText(), /Awaiting confirmation/);
+    assert.equal(await page.locator(".milestone-planned").count(), 2);
+    assert.equal(await page.locator(".milestone-planned").filter({ hasText: "Awaiting confirmation" }).count(), 1);
   } finally { await page.close(); }
 });
 
