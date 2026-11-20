@@ -6,6 +6,7 @@ export const academy = {
   timeZone: "America/New_York", currency: "USD",
   url: "https://analytics.google.com/analytics/web/#/a7033805p284885806/reports/intelligenthome",
 };
+export const verifiedMappings = new Map([["relias-academy", academy]]);
 
 export function parseDomains(values) {
   const [header = [], ...rows] = values ?? [];
@@ -60,7 +61,7 @@ function decodeReport(report, ranges, property) {
   return result;
 }
 
-export async function refreshSnapshot({ roster, mappings, gaReport, store, now = new Date(), warn = console.warn }) {
+export async function refreshSnapshot({ roster, mappings = verifiedMappings, gaReport, store, now = new Date(), warn = console.warn }) {
   const toolboxDomains = await roster();
   for (const id of mappings.keys()) {
     if (!toolboxDomains.some(domain => domain.id === id)) throw new Error("A GA4 mapping references an unknown Toolbox domain ID");

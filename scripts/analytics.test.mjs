@@ -106,6 +106,22 @@ test("the roster uses stable IDs and rejects duplicates and unknown configured k
   }), /unknown Toolbox domain ID/);
 });
 
+test("the default refresh queries only the verified Toolbox domain, regardless of display name", async () => {
+  const queried = [];
+  const snapshot = await refresh({
+    now, store: memory(),
+    roster: async () => [{ id: "relias-academy", name: "Renamed Academy" }, { id: "academy-portals", name: "Relias Academy" }],
+    gaReport(property, payload) {
+      queried.push(property.propertyId);
+      return fixture(property, payload);
+    },
+  });
+  assert.deepEqual(queried, ["284885806", "284885806"]);
+  assert.equal(snapshot.domains[0].name, "Renamed Academy");
+  assert.equal(snapshot.domains[1].status, "Unavailable");
+  assert.equal(snapshot.domains[1].windows, undefined);
+});
+
 test("the Toolbox workbook is used only for the existing Domains tab", async () => {
   assert.throws(() => googleAnalyticsAdapters({ spreadsheetId: "same", domainsSpreadsheetId: "same" }), /separate spreadsheet/);
   const { roster } = googleAnalyticsAdapters({ spreadsheetId: "private", domainsSpreadsheetId: "toolbox", getAccessToken: () => "fixture-token",

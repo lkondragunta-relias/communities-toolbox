@@ -1,18 +1,15 @@
-import { academy, googleAnalyticsAdapters, refreshSnapshot } from "./snapshot.mjs";
+import { googleAnalyticsAdapters, refreshSnapshot } from "./snapshot.mjs";
 
-const { TOOLBOX_ANALYTICS_SHEET_ID, TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID, TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN,
-  TOOLBOX_ANALYTICS_ACADEMY_DOMAIN_ID } = process.env;
+const { TOOLBOX_ANALYTICS_SHEET_ID, TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID, TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN } = process.env;
 if (!TOOLBOX_ANALYTICS_SHEET_ID || !TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID || !TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN) {
   throw new Error("Private snapshot spreadsheet ID, existing Toolbox spreadsheet ID, and a short-lived Google access token are required");
 }
 
-const academyDomainId = TOOLBOX_ANALYTICS_ACADEMY_DOMAIN_ID?.trim().toLowerCase();
-const mappings = new Map(academyDomainId ? [[academyDomainId, academy]] : []);
-const snapshot = await refreshSnapshot({ ...googleAnalyticsAdapters({
+const snapshot = await refreshSnapshot(googleAnalyticsAdapters({
   spreadsheetId: TOOLBOX_ANALYTICS_SHEET_ID,
   domainsSpreadsheetId: TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID,
   getAccessToken: () => TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN,
-}), mappings });
+}));
 
 const unmapped = snapshot.domains.filter(row => !row.propertyId).length;
 const failures = snapshot.domains.filter(row => row.propertyId && row.status !== "Reported").length;
