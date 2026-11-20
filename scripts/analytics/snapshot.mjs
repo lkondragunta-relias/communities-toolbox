@@ -1,0 +1,149 @@
+import { metrics, reportingDate, reportingWindows, shiftDate } from "../../src/utils/analytics.js";
+
+const keys = metrics.map(([key]) => key);
+export const academy = {
+  id: "284885806", name: "Relias Academy", host: "reliasacademy.com",
+  timeZone: "America/New_York", currency: "USD",
+  url: "https://analytics.google.com/analytics/web/#/a7033805p284885806/reports/intelligenthome",
+};
+
+function assertSnapshot(state) {
+  if (state?.version !== 1 || !Array.isArray(state.domains)) throw new Error("Invalid analytics snapshot");
+  return state;
+}
+
+function decodeReport(report, ranges, property) {
+  const { metadata = {}, dimensionHeaders = [], metricHeaders = [], rows = [] } = report;
+  if (metadata.timeZone !== property.timeZone || metadata.currencyCode !== property.currency ||
+      metadata.subjectToThresholding || metadata.dataLossFromOtherRow || metadata.samplingMetadatas?.length ||
+      metadata.schemaRestrictionResponse?.activeMetricRestrictions?.length || metadata.dataTruncationReasons?.length ||
+      dimensionHeaders[0]?.name !== "dateRange" || keys.some((key, index) => metricHeaders[index]?.name !== key)) {
+    throw new Error("GA4 report did not match the requested scope or quality requirements");
+  }
+  const result = {};
+  for (const row of rows) {
+    const name = row.dimensionValues?.[0]?.value;
+    if (!Object.hasOwn(ranges, name) || Object.hasOwn(result, name)) throw new Error("Unexpected GA4 date range");
+    const values = keys.map((key, index) => {
+      const value = row.metricValues?.[index]?.value;
+      const number = Number(value);
+      if (typeof value !== "string" || value.trim() === "" || !Number.isFinite(number) ||
+          (["sessions", "totalUsers", "newUsers", "ecommercePurchases"].includes(key) && (!Number.isSafeInteger(number) || number < 0)) ||
+          (key === "sessionKeyEventRate" && (number < 0 || number > 1))) {
+        throw new Error("Invalid GA4 metric");
+      }
+      return number;
+    });
+    result[name] = { ...ranges[name], metrics: Object.fromEntries(keys.map((key, index) => [
+      key, key === "averagePurchaseRevenue" && values[4] <= 0 ? null : values[index],
+    ])) };
+  }
+  return result;
+}
+
+export async function refreshSnapshot({ properties = [academy], gaReport, store, now = new Date(), warn = console.warn }) {
+  const previous = assertSnapshot(await store.read());
+  const domains = [];
+  for (const property of properties) {
+    const old = previous.domains.find(row => row.id === property.id);
+    const ranges = Object.entries(reportingWindows(reportingDate(now, property.timeZone)));
+    const request = async entries => {
+      const report = await gaReport(property, {
+        currencyCode: property.currency,
+        dateRanges: entries.map(([name, range]) => ({ name, ...range })),
+        metrics: keys.map(name => ({ name })), keepEmptyRows: true,
+      });
+      return decodeReport(report, Object.fromEntries(entries), property);
+    };
+    try {
+      const windows = await request(ranges.slice(0, 4));
+      if (!windows.day || !windows.week) throw new Error("Current GA4 windows are unavailable");
+      try {
+        Object.assign(windows, await request(ranges.slice(4)));
+      } catch {
+        warn(`Analytics year-over-year comparison unavailable for ${property.id}`);
+      }
+      const sameDates = old?.windows?.day?.endDate === windows.day.endDate;
+      if (sameDates && old.currency === property.currency && old.timeZone === property.timeZone) {
+        for (const [name, range] of ranges) {
+          const cached = old.windows[name];
+          if (!windows[name] && cached?.startDate === range.startDate && cached.endDate === range.endDate) windows[name] = cached;
+        }
+      }
+      domains.push({
+        ...property, windows, status: Object.keys(windows).length === 6 ? "Reported" : "Partial",
+        fetchedAt: now.toISOString(), previousGood: sameDates ? old?.previousGood : old?.windows ? {
+          windows: old.windows, fetchedAt: old.fetchedAt,
+        } : undefined,
+      });
+    } catch {
+      warn(`Current analytics refresh unavailable for ${property.id}`);
+      domains.push(old?.windows && old.timeZone === property.timeZone && old.currency === property.currency ?
+        { ...old, ...property, status: "Stale" } : { ...property, status: "Unavailable" });
+    }
+  }
+  const snapshot = { version: 1, attemptedAt: now.toISOString(), domains };
+  await store.write(snapshot);
+  return snapshot;
+}
+
+export function analyticsReader({ authorize, store, clock = () => new Date() }) {
+  if (typeof authorize !== "function") throw new Error("Analytics requires a server authorization check");
+  const headers = { "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" };
+  return async request => {
+    if (request.method !== "GET") return new Response(null, { status: 405, headers: { ...headers, Allow: "GET" } });
+    try {
+      if (await authorize(request) !== true) return new Response(null, { status: 403, headers });
+      const { version, domains } = assertSnapshot(await store.read());
+      const now = clock();
+      const rows = domains.map(({ id, name, host, url, currency, timeZone, fetchedAt, status, windows }) => {
+        const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now));
+        const oldestCurrent = shiftDate(reportingDate(now, timeZone), hour >= 18 ? -1 : -2);
+        const old = windows && windows.day.endDate < oldestCurrent;
+        return { id, name, host, url, currency, timeZone, fetchedAt, status: old ? "Stale" : status, windows };
+      });
+      return Response.json({ version, domains: rows }, { headers });
+    } catch {
+      return new Response(null, { status: 503, headers });
+    }
+  };
+}
+
+export function googleAnalyticsAdapters({ getAccessToken, spreadsheetId, fetchImpl = fetch }) {
+  const auth = async url => {
+    const token = await getAccessToken();
+    if (!token) throw new Error("Google access token unavailable");
+    return fetchImpl(url.endpoint, {
+      ...url.options, redirect: "error", signal: AbortSignal.timeout(20_000),
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    });
+  };
+  async function json(endpoint, options) {
+    for (let attempt = 0; ; attempt++) {
+      const response = await auth({ endpoint, options });
+      if (response.ok) return response.json();
+      if (![429, 500, 503].includes(response.status) || attempt >= 2) throw new Error(`Google API returned HTTP ${response.status}`);
+      await new Promise(resolve => setTimeout(resolve, (2 ** attempt) * 500));
+    }
+  }
+  const range = "Analytics!A1";
+  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`;
+  return {
+    gaReport(property, payload) {
+      return json(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(property.id)}:runReport`,
+        { method: "POST", body: JSON.stringify(payload) });
+    },
+    store: {
+      async read() {
+        const response = await json(endpoint);
+        const cell = response.values?.[0]?.[0];
+        return cell === undefined ? { version: 1, domains: [] } : assertSnapshot(JSON.parse(cell));
+      },
+      async write(snapshot) {
+        const value = JSON.stringify(snapshot);
+        if (value.length > 49_000) throw new Error("Analytics snapshot exceeds the Sheet cell limit");
+        await json(`${endpoint}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ values: [[value]] }) });
+      },
+    },
+  };
+}

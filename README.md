@@ -2,6 +2,14 @@
 
 Interactive product roadmap viewer built with React and Vite. Initiative data lives in Google Sheets; a bound Apps Script Web App serves reads and authenticated writes to the browser.
 
+### Domain analytics
+
+The Analytics view shows the latest two completed-date windows and optional comparisons. Relias Academy is the only configured property; its figures are property totals, not a single-host report. No demonstration or live metrics are bundled with the frontend.
+
+- **Refresh:** Run `node scripts/analytics/refresh.mjs` as a single-writer job, daily at 5 p.m. Eastern for the Academy property. Provision a private spreadsheet with an `Analytics` tab and supply its ID via `TOOLBOX_ANALYTICS_SHEET_ID`. At invocation, the job identity needs a short-lived access token in `TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN` scoped to `analytics.readonly` and `spreadsheets`, Viewer access to Academy, and edit access to that spreadsheet. Keep the token out of source, logs and Vite variables. Enable both Google APIs. The job replaces `Analytics!A1` in one write and keeps the current and previous good snapshot; an incomplete run exits nonzero for monitoring.
+- **Read:** Mount `analyticsReader` from `scripts/analytics/snapshot.mjs` as `GET /communities-toolbox/api/analytics` on the same origin as the private deployment. Pass a server-verified leadership access check as `authorize(request)`, and use `googleAnalyticsAdapters(...).store` with a separate read-only Sheet identity (`spreadsheets.readonly`, spreadsheet Viewer). The handler denies access before reading and returns no-store responses. Do not mount it on the public Sheets web app or authorize using the Toolbox browser password.
+- **Enable:** Set `VITE_PRIVATE_ANALYTICS=true` only when building for the private host after the protected route is working. The default Pages build makes no analytics requests. The scheduler, Sheet, and private hosting route are deployment prerequisites; the local Copilot GA4 connection is not the scheduled job's identity.
+
 ## Table of contents
 
 - [About the app](#about-the-app)

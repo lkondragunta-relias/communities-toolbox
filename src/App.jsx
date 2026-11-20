@@ -18,6 +18,7 @@ import OverviewView from "./components/views/OverviewView";
 import IncidentsView from "./components/views/IncidentsView";
 import MilestonesView from "./components/views/MilestonesView";
 import SitesView from "./components/views/SitesView";
+import AnalyticsView from "./components/views/AnalyticsView";
 import OrgView from "./components/views/OrgView";
 import SettingsView from "./components/views/SettingsView";
 import ProjectDetail from "./components/ProjectDetail";
@@ -58,7 +59,7 @@ import {
 const VIEW_TITLES = Object.fromEntries(ROUTES.map((r) => [r.id, r.title]));
 
 /** Views that own their own header actions, so the topbar Add button hides. */
-const SELF_MANAGED_VIEWS = new Set(["incidents", "milestones", "sites", "org", "settings"]);
+const SELF_MANAGED_VIEWS = new Set(["incidents", "milestones", "sites", "analytics", "org", "settings"]);
 
 const SIDEBAR_STORAGE_KEY = "roadmap_sidebar_collapsed";
 const ROADMAP_MODE_KEY = "roadmap_layout";
@@ -510,7 +511,7 @@ export default function App() {
     }
   }, [quarters, showAllQuarters]);
 
-  if (loaderVisible) {
+  if (loaderVisible && view !== "analytics") {
     return <LoadingScreen pending={loading} onFinish={() => setLoaderVisible(false)} />;
   }
 
@@ -614,9 +615,10 @@ export default function App() {
         </header>
 
         <div className="app__content theme-scroll">
-          {error ? <p className="roadmap__error">{error}</p> : null}
+          {view !== "analytics" && error ? <p className="roadmap__error">{error}</p> : null}
+          {view === "analytics" ? <AnalyticsView /> : null}
 
-          {data && !error ? (
+          {view !== "analytics" && data && !error ? (
             view === "overview" ? (
               <OverviewView
                 data={data}
