@@ -5,8 +5,9 @@ import { pathToFileURL } from "node:url";
 import { MAIN_ENDPOINT, readEndpoint } from "../../.github/skills/feedback-pipeline/scripts/feedback-api.mjs";
 import { reportRequests, refreshSnapshot, verifiedMappings } from "./snapshot.mjs";
 
-const revision = text => createHash("sha256").update(text).digest("base64");
-const empty = { version: 1, domains: [] };
+const revision = snapshot => createHash("sha256").update(JSON.stringify(snapshot, (_key, value) =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? Object.fromEntries(Object.keys(value).sort().map(field => [field, value[field]])) : value)).digest("base64");
 
 export function readWriterToken({ env = process.env, platform = process.platform, spawn = spawnSync } = {}) {
   let token = env.TOOLBOX_ANALYTICS_WRITE_TOKEN;
@@ -53,28 +54,28 @@ export function createSnapshotStore({ endpoint, token, fetcher = fetch }) {
   let readRevision;
   const read = async () => {
     const result = await call("readAnalyticsSnapshot");
-    if (typeof result.snapshot !== "string" || result.revision !== revision(result.snapshot)) {
+    if (result.storage !== "columns" || result.snapshot?.version !== 1 || !Array.isArray(result.snapshot.domains) ||
+        result.revision !== revision(result.snapshot)) {
       throw new Error("ANALYTICS_READ_INVALID");
     }
     readRevision = result.revision;
-    return result.snapshot === "" ? structuredClone(empty) : JSON.parse(result.snapshot);
+    return result.snapshot;
   };
   return {
     read,
     async write(snapshot) {
       if (!readRevision) throw new Error("ANALYTICS_READ_REQUIRED");
-      const text = JSON.stringify(snapshot);
-      if (text.length > 49000) throw new Error("ANALYTICS_CELL_LIMIT");
+      const expectedResult = revision(snapshot);
       const expectedRevision = readRevision;
       try {
-        const receipt = await call("replaceAnalyticsSnapshot", { expectedRevision, snapshot: text });
-        if (receipt.revision !== revision(text)) throw new Error("ANALYTICS_WRITE_RECEIPT_INVALID");
+        const receipt = await call("replaceAnalyticsSnapshot", { expectedRevision, snapshot });
+        if (receipt.revision !== expectedResult) throw new Error("ANALYTICS_WRITE_RECEIPT_INVALID");
       } catch (error) {
         if (error.message === "ANALYTICS_CONFLICT" || error.message === "ANALYTICS_ROSTER_CHANGED") throw error;
         // A lost response does not imply the write failed. Verify instead of retrying.
       }
       await read();
-      if (readRevision !== revision(text)) throw new Error("ANALYTICS_WRITE_NOT_VERIFIED");
+      if (readRevision !== expectedResult) throw new Error("ANALYTICS_WRITE_NOT_VERIFIED");
     },
   };
 }
@@ -138,6 +139,15 @@ export async function applyReports({ runAt, reports }, { store, roster, clock = 
       write(next) {
         if (!next.domains.some(row => row.fetchedAt === runAt && ["Reported", "Partial"].includes(row.status))) {
           throw new Error("ANALYTICS_NO_CURRENT_REPORTS");
+        }
+        // Sheets stores at most 15 significant digits. Normalize metrics before hashing the
+        // expected snapshot so full-precision GA4 rate values can round-trip through numeric cells.
+        for (const { windows } of next.domains) {
+          for (const { metrics } of Object.values(windows ?? {})) {
+            for (const [key, value] of Object.entries(metrics)) {
+              if (value !== null) metrics[key] = Number(value.toPrecision(15));
+            }
+          }
         }
         return store.write(next);
       },

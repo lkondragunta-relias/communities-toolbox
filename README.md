@@ -24,21 +24,27 @@ Apps Script. Google Sheets does not connect to GA4. No GA4 API client or combine
 3. Give `node scripts/analytics/refresh.mjs apply` the JSON object `{ "runAt": "...", "reports": { ... } }` on
    stdin, with the original `runAt` and each report under its request ID. Use a private, short-lived input if
    needed; do not put raw reports or tokens in public logs, artifacts or Git. The helper validates the roster
-   and report shapes, replaces `Analytics!A1`, then verifies the value by reading it back. It prints only counts
-   and safe errors. If all current reports fail, it leaves the cell untouched. Individual failures preserve the
+   and report shapes, overwrites only the `Analytics` tab, then verifies the table by reading it back. It prints only counts
+   and safe errors. If all current reports fail, it leaves the tab untouched. Individual failures preserve the
    last good dated values when available. Resolve conflicts by rereading, not retrying a blind overwrite.
+
+The tab has one row per Toolbox domain and explicit metric columns for the six reporting windows. Dates,
+refresh timestamps, and status are separate columns. A blank metric means unavailable; `0` is a reported zero.
+The first successful refresh with the updated writer replaces the previous single-cell JSON snapshot.
 
 #### One-time activation
 
-- The existing feedback edit actions cannot write to `Analytics!A1`. The owner must update the **existing**
-  Apps Script deployment with the reviewed `Code.gs` patch. Set distinct high-entropy (32+ characters)
+- The existing feedback edit actions cannot write to `Analytics`. Update the **existing** bound Apps Script
+  with `scripts/google-apps-script/Code.gs` and `AnalyticsTable.gs`, then move the nightly job to the matching
+  refresh helper together. An old writer cannot overwrite the new table. Set distinct high-entropy (32+ characters)
   `ANALYTICS_WRITE_TOKEN` and `ANALYTICS_READ_TOKEN` script properties. The existing browser/admin password is
   not accepted for either action. Run `check` from the actual automation runtime; also verify the Analytics
   MCP is available in that runtime before enabling the task. Do not add a second schedule.
 - Confirm Google Drive remains restricted to people allowed to see these metrics, **Publish to web** is off,
   and anonymous Toolbox GETs do not include Analytics. A tab is not a permission boundary. The job keeps one
   current value, but cannot disable Google Sheets version history.
-- A Google-hosted read-only dashboard can use Google sign-in with no separate server or browser credential.
+- Live UI access is pending approval of how Toolbox readers will be allowed to see the private numbers.
+  The page never needs GA4 authorization. A Google-hosted read-only dashboard is one supported option.
   Build it with `node scripts/analytics/google-dashboard/build.mjs` and copy `Code.gs`, `Dashboard.html`, and
   `appsscript.json` from `dist-google-analytics-dashboard/` into a **separate** standalone Apps Script project.
   Do not add these files to the existing public Toolbox Apps Script deployment.

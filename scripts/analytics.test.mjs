@@ -174,8 +174,11 @@ test("the default refresh filters verified traffic scopes and leaves unverified 
 
 const writerToken = "synthetic-writer-token-0123456789abcdef";
 const readerToken = "synthetic-reader-token-0123456789abcdef";
-async function sheetFixture() {
-  let cell = "";
+const tableSource = readFileSync(new URL("./google-apps-script/AnalyticsTable.gs", import.meta.url), "utf8");
+const loadTable = ctx => vm.runInContext(tableSource, ctx);
+async function sheetFixture(initial = [[""]]) {
+  let values = initial;
+  let columns = 26;
   let reads = 0;
   let writes = 0;
   const domains = await roster();
@@ -186,13 +189,34 @@ async function sheetFixture() {
     SpreadsheetApp: { getActiveSpreadsheet: () => ({
       getSheetByName(name) {
         assert.equal(name, "Analytics");
-        return { getRange(row, col) {
-          assert.deepEqual([row, col], [1, 1]);
-          return {
-            getFormula: () => "", getValue() { reads++; return cell; },
-            setValue(value) { writes++; cell = value; },
-          };
-        } };
+        return {
+          getDataRange: () => ({
+            getFormulas: () => values.map(row => row.map(() => "")),
+            getValues() { reads++; return values; },
+          }),
+          getMaxRows: () => 100,
+          getMaxColumns: () => columns,
+          insertColumnsAfter(start, count) {
+            assert.equal(start, columns);
+            columns += count;
+          },
+          getRange(row, col, height, width) {
+            assert.deepEqual([row, col, width], [1, 1, columns]);
+            return {
+              setNumberFormats(formats) {
+                assert.equal(formats.length, height);
+                assert.equal(formats[0][0], "@");
+                assert.equal(formats[0][16], "General");
+              },
+              setValues(next) {
+                assert.equal(next.length, height);
+                assert.ok(next.every(row => row.length === width));
+                writes++;
+                values = next;
+              },
+            };
+          },
+        };
       },
     }), flush() {} },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
@@ -201,6 +225,7 @@ async function sheetFixture() {
       base64Encode: value => Buffer.from(value).toString("base64"),
     },
   });
+  loadTable(ctx);
   vm.runInContext(readFileSync(new URL("./google-apps-script/Code.gs", import.meta.url), "utf8"), ctx);
   Object.assign(ctx, { readDomains_: () => domains, readRoadmap_: () => ({ domains }), jsonResponse: value => value });
   const post = body => ctx.doPost({ postData: { contents: JSON.stringify(body) } });
@@ -209,7 +234,7 @@ async function sheetFixture() {
     assert.equal(options.method, "POST");
     return Response.json(post(JSON.parse(options.body)));
   };
-  return { ctx, post, fetcher, state: () => ({ cell, reads, writes }) };
+  return { ctx, post, fetcher, state: () => ({ values, reads, writes }), setRoster(next) { ctx.readDomains_ = () => next; } };
 }
 
 test("Apps Script denies legacy tokens, restricts writer access, and does not expose Analytics via GET", async () => {
@@ -221,12 +246,39 @@ test("Apps Script denies legacy tokens, restricts writer access, and does not ex
   const store = createSnapshotStore({ endpoint: MAIN_ENDPOINT, token: writerToken, fetcher: sheet.fetcher });
   await store.read();
   const prior = sheet.post({ action: "readAnalyticsSnapshot", analyticsToken: writerToken });
-  const snapshot = { version: 1, attemptedAt: now.toISOString(), domains: await roster() };
+  const snapshot = await refreshSnapshot({ store: memory(), now, gaReport: fixture });
+  const legacyWrite = sheet.post({ action: "replaceAnalyticsSnapshot", analyticsToken: writerToken,
+    expectedRevision: prior.revision, snapshot: JSON.stringify(snapshot) });
+  assert.equal(legacyWrite.code, "INVALID");
+  assert.equal(sheet.state().writes, 0);
   await store.write(snapshot);
   const conflict = sheet.post({ action: "replaceAnalyticsSnapshot", analyticsToken: writerToken,
-    expectedRevision: prior.revision, snapshot: JSON.stringify(snapshot) });
+    expectedRevision: prior.revision, snapshot });
   assert.equal(conflict.code, "CONFLICT");
   assert.equal(sheet.state().writes, 1);
+});
+
+test("the first successful refresh replaces the legacy cell with numeric columns and clears retired rows", async () => {
+  const snapshot = await refreshSnapshot({ store: memory(), now, gaReport: fixture });
+  snapshot.domains[0].windows.day.metrics.purchaseRevenue = 0;
+  snapshot.domains[0].windows.day.metrics.averagePurchaseRevenue = null;
+  const sheet = await sheetFixture([[JSON.stringify(snapshot)]]);
+  const store = createSnapshotStore({ endpoint: MAIN_ENDPOINT, token: writerToken, fetcher: sheet.fetcher });
+  assert.deepEqual(await store.read(), snapshot);
+  await store.write(snapshot);
+  const [headers, reported, unmapped] = sheet.state().values;
+  assert.equal(headers.length, 68);
+  assert.equal(new Set(headers).size, headers.length);
+  assert.equal(reported[headers.indexOf("Yesterday / Purchase revenue")], 0);
+  assert.equal(reported[headers.indexOf("Yesterday / Average order value")], "");
+  assert.equal(unmapped[headers.indexOf("Last 7 days / Sessions")], "");
+  assert.equal(reported[headers.indexOf("Last 7 days - same period last year / Sessions")], 100);
+  assert.deepEqual(await store.read(), snapshot);
+  snapshot.domains.pop();
+  sheet.setRoster(snapshot.domains);
+  await store.write(snapshot);
+  assert.ok(sheet.state().values[2].every(value => value === ""));
+  assert.deepEqual(await store.read(), snapshot);
 });
 
 function mcpReports() {
@@ -243,19 +295,19 @@ function mcpReports() {
   return { runAt: plan.runAt, reports: Object.fromEntries(reports) };
 }
 
-test("the refresh leaves the existing cell untouched if every MCP report fails", async () => {
+test("the refresh leaves the existing table untouched if every MCP report fails", async () => {
   const sheet = await sheetFixture();
   const store = createSnapshotStore({ endpoint: MAIN_ENDPOINT, token: writerToken, fetcher: sheet.fetcher });
   const run = mcpReports();
   await applyReports(run, { store, roster, clock: () => now, mappings });
-  const { cell, writes } = sheet.state();
+  const { values, writes } = sheet.state();
   await assert.rejects(applyReports({ ...run, reports: {} }, { store, roster, clock: () => now, mappings }),
     /ANALYTICS_NO_CURRENT_REPORTS/);
-  assert.equal(sheet.state().cell, cell);
+  assert.equal(sheet.state().values, values);
   assert.equal(sheet.state().writes, writes);
 });
 
-test("a lost write response is verified by reading the cell, without retrying the write", async () => {
+test("a lost write response is verified by reading the table, without retrying the write", async () => {
   const sheet = await sheetFixture();
   const store = createSnapshotStore({ endpoint: MAIN_ENDPOINT, token: writerToken, async fetcher(url, options) {
     const response = await sheet.fetcher(url, options);
@@ -264,6 +316,17 @@ test("a lost write response is verified by reading the cell, without retrying th
   } });
   await applyReports(mcpReports(), { store, roster, clock: () => now, mappings });
   assert.equal(sheet.state().writes, 1);
+});
+
+test("the refresh stores full-precision GA4 rates at Sheet numeric precision", async () => {
+  const sheet = await sheetFixture();
+  const store = createSnapshotStore({ endpoint: MAIN_ENDPOINT, token: writerToken, fetcher: sheet.fetcher });
+  const input = mcpReports();
+  const report = input.reports["academy-fixture:0"];
+  const index = report.metric_headers.findIndex(metric => metric.name === "sessionKeyEventRate");
+  report.rows[0].metric_values[index] = { value: "0.12345678901234567" };
+  await applyReports(input, { store, roster, clock: () => now, mappings });
+  assert.equal((await store.read()).domains[0].windows.day.metrics.sessionKeyEventRate, 0.123456789012346);
 });
 
 test("the refresh uses only the dedicated local Keychain item when no environment token is set", () => {
@@ -289,7 +352,7 @@ test("the refresh uses the smaller Toolbox roster response and fails closed on a
     /ANALYTICS_ROSTER_INVALID/);
 });
 
-test("the separate Google dashboard reads only A1 for the executing Relias user with workbook access", async () => {
+test("the separate Google dashboard reads only the Analytics tab for a Relias user with workbook access", async () => {
   const snapshot = await refreshSnapshot({ store: memory(), now, gaReport: fixture });
   let active = "";
   let effective = "owner@relias.com";
@@ -301,13 +364,17 @@ test("the separate Google dashboard reads only A1 for the executing Relias user 
     PropertiesService: { getScriptProperties: () => ({ getProperty: () => workbookId }) },
     Sheets: { Spreadsheets: { Values: { get(id, range, options) {
       assert.equal(id, workbookId);
-      assert.equal(range, "Analytics!A1");
+      assert.equal(range, "'Analytics'");
       assert.equal(options.valueRenderOption, "FORMULA");
       reads++;
       if (forbidWorkbook) throw Object.assign(new Error("Fixture denial"), { code: 403 });
-      return { values: [[JSON.stringify(snapshot)]] };
+      return { values: ctx.analyticsTable_(snapshot).map(row => {
+        while (row.at(-1) === "") row.pop(); // Sheets omits trailing blank cells.
+        return row;
+      }) };
     } } } },
   });
+  loadTable(ctx);
   vm.runInContext(readFileSync(new URL("./analytics/google-dashboard/Code.gs", import.meta.url), "utf8"), ctx);
   assert.throws(() => ctx.doGet(), /Relias Google account/);
   active = "somebody@relias.com";
@@ -411,7 +478,7 @@ test("MCP reports feed the protected Analytics route and comparison controls", a
     const store = createSnapshotStore({ ...config, token: writerToken });
     const run = mcpReports();
     assert.deepEqual(await applyReports(run, { store, roster, clock: () => now, mappings }), { domains: 2, incomplete: 0 });
-    const snapshot = JSON.parse(sheet.state().cell);
+    const snapshot = await store.read();
     assert.equal(sheet.state().writes, 1);
     assert.deepEqual(Object.keys(snapshot.domains[0].windows).sort(), ["day", "prior_day", "prior_week", "week", "yoy_day", "yoy_week"]);
 

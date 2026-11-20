@@ -1,4 +1,4 @@
-import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import react from "@vitejs/plugin-react";
 import { build } from "vite";
@@ -24,8 +24,10 @@ if (!script || typeof style !== "string" || outputs.length !== 2) throw new Erro
 const inlineScript = script.replace(/<\/script/gi, match => `<\\/${match.slice(2)}`);
 if (/<\/style/i.test(style)) throw new Error("Unexpected closing style tag in Analytics CSS");
 await mkdir(target(""), { recursive: true });
+const serverSources = await Promise.all(["Code.gs", "../../google-apps-script/AnalyticsTable.gs"]
+  .map(name => readFile(source(name), "utf8")));
 await Promise.all([
-  copyFile(source("Code.gs"), target("Code.gs")),
+  writeFile(target("Code.gs"), serverSources.join("\n")),
   copyFile(source("appsscript.json"), target("appsscript.json")),
   writeFile(target("Dashboard.html"), `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="robots" content="noindex, nofollow, noarchive">

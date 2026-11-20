@@ -158,28 +158,55 @@ function analyticsSnapshotAction_(body) {
   })) return { ok: false, code: 'INVALID' };
   var sheet = ss_().getSheetByName('Analytics');
   if (!sheet) return { ok: false, code: 'ANALYTICS_TAB_MISSING' };
-  var cell = sheet.getRange(1, 1);
-  if (cell.getFormula()) return { ok: false, code: 'ANALYTICS_CELL_FORMULA' };
-  var current = cell.getValue();
-  if (typeof current !== 'string') return { ok: false, code: 'ANALYTICS_CELL_INVALID' };
+  var range = sheet.getDataRange();
+  if (range.getFormulas().some(function (row) { return row.some(Boolean); })) {
+    return { ok: false, code: 'ANALYTICS_CELL_FORMULA' };
+  }
+  var values = range.getValues();
+  var current;
+  try {
+    if (values.length === 1 && values[0].length === 1 && typeof values[0][0] === 'string') {
+      // The first successful refresh replaces the old A1 snapshot, not the other tabs.
+      current = values[0][0] === '' ? { version: 1, domains: [] } : JSON.parse(values[0][0]);
+      if (current.version !== 1 || !Array.isArray(current.domains)) throw new Error('Invalid legacy snapshot.');
+    } else {
+      current = analyticsSnapshotFromTable_(values);
+    }
+  } catch (err) {
+    return { ok: false, code: 'ANALYTICS_CELL_INVALID' };
+  }
   var revision = analyticsRevision_(current);
-  if (!replace) return { ok: true, snapshot: current, revision: revision };
+  if (!replace) return { ok: true, storage: 'columns', snapshot: current, revision: revision };
   if (body.expectedRevision !== revision) return { ok: false, code: 'CONFLICT' };
-  var text = body.snapshot;
-  if (typeof text !== 'string' || text.length > 49000 || text.charAt(0) !== '{') return { ok: false, code: 'INVALID' };
-  var snapshot;
-  try { snapshot = JSON.parse(text); } catch (err) { return { ok: false, code: 'INVALID' }; }
-  if (snapshot.version !== 1 || !milestoneTimestamp_(snapshot.attemptedAt) ||
-      !Array.isArray(snapshot.domains) || !snapshot.domains.length) return { ok: false, code: 'INVALID' };
+  var table, snapshot;
+  try {
+    table = analyticsTable_(body.snapshot);
+    snapshot = analyticsSnapshotFromTable_(table);
+    if (analyticsRevision_(body.snapshot) !== analyticsRevision_(snapshot)) return { ok: false, code: 'INVALID' };
+  } catch (err) {
+    return { ok: false, code: 'INVALID' };
+  }
   var expectedIds = readDomains_().map(function (domain) { return domain.id; }).sort();
   var actualIds = snapshot.domains.map(function (domain) { return domain && domain.id; }).sort();
   if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) return { ok: false, code: 'ROSTER_CHANGED' };
-  cell.setValue(text);
+  var width = table[0].length, height = Math.max(values.length, table.length);
+  var columns = sheet.getMaxColumns(), rows = sheet.getMaxRows();
+  if (width > columns) sheet.insertColumnsAfter(columns, width - columns);
+  if (height > rows) sheet.insertRowsAfter(rows, height - rows);
+  while (table.length < height) table.push(Array(width).fill(''));
+  var target = sheet.getRange(1, 1, height, width);
+  var formats = analyticsColumns_(true);
+  target.setNumberFormats(table.map(function () { return formats; }));
+  target.setValues(table);
   SpreadsheetApp.flush();
-  return { ok: true, revision: analyticsRevision_(text) };
+  return { ok: true, revision: analyticsRevision_(snapshot) };
 }
 
-function analyticsRevision_(text) {
+function analyticsRevision_(snapshot) {
+  var text = JSON.stringify(snapshot, function (key, value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    return Object.fromEntries(Object.keys(value).sort().map(function (field) { return [field, value[field]]; }));
+  });
   return Utilities.base64Encode(Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8
   ));
