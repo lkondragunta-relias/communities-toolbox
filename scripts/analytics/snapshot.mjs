@@ -2,10 +2,29 @@ import { metrics, reportingDate, reportingWindows, shiftDate } from "../../src/u
 
 const keys = metrics.map(([key]) => key);
 export const academy = {
-  id: "284885806", name: "Relias Academy", host: "reliasacademy.com",
+  propertyId: "284885806", host: "reliasacademy.com",
   timeZone: "America/New_York", currency: "USD",
   url: "https://analytics.google.com/analytics/web/#/a7033805p284885806/reports/intelligenthome",
 };
+
+export function parseDomains(values) {
+  const [header = [], ...rows] = values ?? [];
+  const columns = header.map(value => String(value).trim().toLowerCase());
+  const column = aliases => aliases.map(alias => columns.indexOf(alias)).find(index => index >= 0);
+  const idColumn = column(["title", "id"]);
+  const nameColumn = column(["name", "label"]);
+  if (idColumn === undefined) throw new Error("Toolbox Domains tab is missing its Title or ID column");
+  const domains = new Map();
+  for (const row of rows) {
+    const rawId = String(row[idColumn] ?? "").trim();
+    if (!rawId) continue;
+    const id = rawId.toLowerCase();
+    if (domains.has(id)) throw new Error("Toolbox Domains tab contains duplicate domain IDs");
+    domains.set(id, { id, name: String(row[nameColumn] ?? "").trim() || rawId });
+  }
+  if (!domains.size) throw new Error("Toolbox Domains tab contains no domain IDs");
+  return [...domains.values()];
+}
 
 function assertSnapshot(state) {
   if (state?.version !== 1 || !Array.isArray(state.domains)) throw new Error("Invalid analytics snapshot");
@@ -41,11 +60,22 @@ function decodeReport(report, ranges, property) {
   return result;
 }
 
-export async function refreshSnapshot({ properties = [academy], gaReport, store, now = new Date(), warn = console.warn }) {
+export async function refreshSnapshot({ roster, mappings, gaReport, store, now = new Date(), warn = console.warn }) {
+  const toolboxDomains = await roster();
+  for (const id of mappings.keys()) {
+    if (!toolboxDomains.some(domain => domain.id === id)) throw new Error("A GA4 mapping references an unknown Toolbox domain ID");
+  }
   const previous = assertSnapshot(await store.read());
   const domains = [];
-  for (const property of properties) {
-    const old = previous.domains.find(row => row.id === property.id);
+  for (const domain of toolboxDomains) {
+    const mapping = mappings.get(domain.id);
+    if (!mapping) {
+      domains.push({ ...domain, status: "Unavailable", reason: "No verified GA4 mapping" });
+      continue;
+    }
+    const property = { ...mapping, ...domain };
+    const old = previous.domains.find(row => row.id === domain.id && row.propertyId === property.propertyId &&
+      row.timeZone === property.timeZone && row.currency === property.currency);
     const ranges = Object.entries(reportingWindows(reportingDate(now, property.timeZone)));
     const request = async entries => {
       const report = await gaReport(property, {
@@ -64,7 +94,7 @@ export async function refreshSnapshot({ properties = [academy], gaReport, store,
         warn(`Analytics year-over-year comparison unavailable for ${property.id}`);
       }
       const sameDates = old?.windows?.day?.endDate === windows.day.endDate;
-      if (sameDates && old.currency === property.currency && old.timeZone === property.timeZone) {
+      if (sameDates) {
         for (const [name, range] of ranges) {
           const cached = old.windows[name];
           if (!windows[name] && cached?.startDate === range.startDate && cached.endDate === range.endDate) windows[name] = cached;
@@ -78,7 +108,7 @@ export async function refreshSnapshot({ properties = [academy], gaReport, store,
       });
     } catch {
       warn(`Current analytics refresh unavailable for ${property.id}`);
-      domains.push(old?.windows && old.timeZone === property.timeZone && old.currency === property.currency ?
+      domains.push(old?.windows ?
         { ...old, ...property, status: "Stale" } : { ...property, status: "Unavailable" });
     }
   }
@@ -96,11 +126,14 @@ export function analyticsReader({ authorize, store, clock = () => new Date() }) 
       if (await authorize(request) !== true) return new Response(null, { status: 403, headers });
       const { version, domains } = assertSnapshot(await store.read());
       const now = clock();
-      const rows = domains.map(({ id, name, host, url, currency, timeZone, fetchedAt, status, windows }) => {
-        const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now));
-        const oldestCurrent = shiftDate(reportingDate(now, timeZone), hour >= 18 ? -1 : -2);
-        const old = windows && windows.day.endDate < oldestCurrent;
-        return { id, name, host, url, currency, timeZone, fetchedAt, status: old ? "Stale" : status, windows };
+      const rows = domains.map(({ id, name, host, url, currency, timeZone, fetchedAt, status, reason, windows }) => {
+        let currentStatus = status;
+        if (windows) {
+          const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now));
+          const oldestCurrent = shiftDate(reportingDate(now, timeZone), hour >= 18 ? -1 : -2);
+          if (windows.day.endDate < oldestCurrent) currentStatus = "Stale";
+        }
+        return { id, name, host, url, currency, timeZone, fetchedAt, status: currentStatus, reason, windows };
       });
       return Response.json({ version, domains: rows }, { headers });
     } catch {
@@ -109,7 +142,8 @@ export function analyticsReader({ authorize, store, clock = () => new Date() }) 
   };
 }
 
-export function googleAnalyticsAdapters({ getAccessToken, spreadsheetId, fetchImpl = fetch }) {
+export function googleAnalyticsAdapters({ getAccessToken, spreadsheetId, domainsSpreadsheetId, fetchImpl = fetch }) {
+  if (domainsSpreadsheetId && domainsSpreadsheetId === spreadsheetId) throw new Error("Analytics snapshots must use a separate spreadsheet");
   const auth = async url => {
     const token = await getAccessToken();
     if (!token) throw new Error("Google access token unavailable");
@@ -129,8 +163,13 @@ export function googleAnalyticsAdapters({ getAccessToken, spreadsheetId, fetchIm
   const range = "Analytics!A1";
   const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`;
   return {
+    async roster() {
+      if (!domainsSpreadsheetId) throw new Error("The existing Toolbox spreadsheet ID is required");
+      const result = await json(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(domainsSpreadsheetId)}/values/Domains`);
+      return parseDomains(result.values);
+    },
     gaReport(property, payload) {
-      return json(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(property.id)}:runReport`,
+      return json(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(property.propertyId)}:runReport`,
         { method: "POST", body: JSON.stringify(payload) });
     },
     store: {

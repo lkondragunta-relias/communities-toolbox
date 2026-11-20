@@ -3,9 +3,12 @@ import test from "node:test";
 import { chromium } from "playwright";
 import { createServer } from "vite";
 import { comparisonChange, reportingDate, reportingWindows } from "../src/utils/analytics.js";
-import { academy, analyticsReader, googleAnalyticsAdapters, refreshSnapshot } from "./analytics/snapshot.mjs";
+import { academy, analyticsReader, googleAnalyticsAdapters, parseDomains, refreshSnapshot as refresh } from "./analytics/snapshot.mjs";
 
 const now = new Date("2026-03-09T01:00:00Z");
+const roster = async () => [{ id: "academy-fixture", name: "Relias Academy" }, { id: "unmapped-fixture", name: "Example Unmapped" }];
+const mappings = new Map([["academy-fixture", academy]]);
+const refreshSnapshot = options => refresh({ roster, mappings, ...options });
 function memory() {
   let state = { version: 1, domains: [] };
   return { read: async () => state, write: async next => { state = next; } };
@@ -44,6 +47,9 @@ test("refresh maps both report batches, retains one previous snapshot and preser
   } };
   const first = await refreshSnapshot(load);
   assert.deepEqual(sizes, [4, 2]);
+  assert.equal(first.domains[0].id, "academy-fixture");
+  assert.equal(first.domains[0].propertyId, academy.propertyId);
+  assert.deepEqual(first.domains[1], { id: "unmapped-fixture", name: "Example Unmapped", status: "Unavailable", reason: "No verified GA4 mapping" });
   assert.equal(first.domains[0].windows.day.metrics.averagePurchaseRevenue, 20.9);
   const next = new Date("2026-03-09T21:00:00Z");
   const partial = await refreshSnapshot({ ...load, now: next, gaReport: (property, payload) => {
@@ -86,6 +92,29 @@ test("reader denies access before reading and excludes previous snapshots from p
   const { domains } = await response.json();
   assert.equal(domains[0].status, "Stale");
   assert.equal(domains[0].previousGood, undefined);
+  assert.equal(domains[1].reason, "No verified GA4 mapping");
+});
+
+test("the roster uses stable IDs and rejects duplicates and unknown configured keys without overwriting the snapshot", async () => {
+  assert.deepEqual(parseDomains([["Label", "Title"], ["New display name", " ACADEMY-FIXTURE "], ["", ""], ["", "OTHER"]]), [
+    { id: "academy-fixture", name: "New display name" }, { id: "other", name: "OTHER" },
+  ]);
+  assert.throws(() => parseDomains([["ID"], ["A"], [" a "]]), /duplicate domain IDs/);
+  await assert.rejects(refreshSnapshot({
+    roster: async () => [{ id: "different-key", name: "Relias Academy" }],
+    store: { read() { assert.fail("Invalid configuration should not reach snapshot storage"); } },
+  }), /unknown Toolbox domain ID/);
+});
+
+test("the Toolbox workbook is used only for the existing Domains tab", async () => {
+  assert.throws(() => googleAnalyticsAdapters({ spreadsheetId: "same", domainsSpreadsheetId: "same" }), /separate spreadsheet/);
+  const { roster } = googleAnalyticsAdapters({ spreadsheetId: "private", domainsSpreadsheetId: "toolbox", getAccessToken: () => "fixture-token",
+    fetchImpl: async (url, options) => {
+      assert.match(url, /\/spreadsheets\/toolbox\/values\/Domains$/);
+      assert.equal(options.method ?? "GET", "GET");
+      return Response.json({ values: [["ID", "Name"], ["domain-key", "Toolbox Domain"]] });
+    } });
+  assert.deepEqual(await roster(), [{ id: "domain-key", name: "Toolbox Domain" }]);
 });
 
 test("the Sheets adapter writes the complete snapshot without exporting its previous version", async () => {
@@ -126,6 +155,9 @@ test("the Analytics route shows private snapshots and switches date and comparis
     assert.match(await row.textContent(), /Mar 7, 2026.*Feb 28, 2026/);
     assert.match(await row.textContent(), /\$20\.90/);
     assert.equal(await row.getByRole("link").getAttribute("href"), academy.url);
+    const unmapped = page.getByRole("row").filter({ hasText: "Example Unmapped" });
+    assert.match(await unmapped.textContent(), /Unavailable.*No verified GA4 mapping/);
+    assert.equal(await unmapped.getByRole("link").count(), 0);
     await page.getByRole("button", { name: "Last 7 days" }).click();
     await page.getByLabel("Compare to").selectOption("yoy");
     assert.match(await row.textContent(), /Mar 1.*7, 2026.*Mar 2.*8, 2025/);

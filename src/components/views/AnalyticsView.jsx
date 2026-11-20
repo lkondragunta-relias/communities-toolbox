@@ -57,10 +57,11 @@ export default function AnalyticsView() {
   if (error) return <div className="analytics__panel"><p role="alert">{error}</p><button type="button" className="app__ghost-btn" onClick={() => { setError(""); setAttempt(value => value + 1); }}>Retry</button></div>;
   if (!snapshot) return <p role="status">Loading analytics…</p>;
 
-  const domains = snapshot.domains.filter(row => `${row.name} ${row.host}`.toLowerCase().includes(search.trim().toLowerCase()))
+  const domains = snapshot.domains.filter(row => `${row.name} ${row.host ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a, b) => {
       const byName = a.name.localeCompare(b.name);
       if (sortKey === "name") return byName;
+      if (!a.currency || !b.currency) return Number(!a.currency) - Number(!b.currency) || byName;
       if (sortKey === "purchaseRevenue" && a.currency !== b.currency) return a.currency.localeCompare(b.currency);
       const value = row => row.status !== "Stale" ? row.windows?.[period]?.metrics[sortKey] ?? -Infinity : -Infinity;
       if (value(a) !== value(b)) return value(a) > value(b) ? -1 : 1;
@@ -106,7 +107,7 @@ export default function AnalyticsView() {
               const link = /^https:\/\/analytics\.google\.com\/analytics\/web\/#\/a\d+p\d+\/reports\/intelligenthome$/.test(row.url) ? row.url : null;
               return <tr key={row.id}>
                 <th scope="row">{link ? <a href={link} target="_blank" rel="noopener noreferrer">{row.name} ↗</a> : row.name}
-                  <small>{row.host}</small>
+                  {row.host ? <small>{row.host}</small> : null}
                   {current ? <small>{rangeLabel(current)}{baseline ? ` vs. ${rangeLabel(baseline)}` : ""} · {row.timeZone}</small> : null}
                 </th>
                 {metrics.map(([key]) => {
@@ -121,6 +122,7 @@ export default function AnalyticsView() {
                   </td>;
                 })}
                 <td><span className="analytics__status" data-status={row.status}>{row.status}</span>
+                  {row.reason ? <small>{row.reason}</small> : null}
                   {row.fetchedAt ? <small>Fetched {new Date(row.fetchedAt).toLocaleString("en-US", { timeZone: row.timeZone, dateStyle: "medium", timeStyle: "short" })}</small> : null}
                   {comparison !== "off" && current && !baseline && row.status !== "Stale" ? <small>Comparison unavailable</small> : null}
                 </td>
