@@ -127,14 +127,16 @@ export async function refreshSnapshot({ roster, mappings = verifiedMappings, gaR
       domains.push({
         ...property, windows, status: !property.scope && Object.keys(windows).length === 6 ? "Reported" : "Partial",
         ...(property.scope ? { reason: "Traffic only; commerce and conversion scope not verified" } : {}),
-        fetchedAt: now.toISOString(), previousGood: sameDates ? old?.previousGood : old?.windows ? {
-          windows: old.windows, fetchedAt: old.fetchedAt,
-        } : undefined,
+        fetchedAt: now.toISOString(),
       });
     } catch {
       warn(`Current analytics refresh unavailable for ${property.id}`);
-      domains.push(old?.windows ?
-        { ...old, ...property, status: "Stale" } : { ...property, status: "Unavailable" });
+      domains.push(old?.windows?.day && old?.windows?.week ? {
+        ...property,
+        windows: Object.fromEntries(ranges.filter(([name]) => Object.hasOwn(old.windows, name))
+          .map(([name]) => [name, old.windows[name]])),
+        status: "Stale", fetchedAt: old.fetchedAt, reason: old.reason,
+      } : { ...property, status: "Unavailable" });
     }
   }
   const snapshot = { version: 1, attemptedAt: now.toISOString(), domains };

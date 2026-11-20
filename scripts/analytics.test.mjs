@@ -40,7 +40,7 @@ test("calendar dates follow property time and align comparison weekdays across D
   assert.equal(comparisonChange("sessions", 15, 0), null);
 });
 
-test("refresh maps both report batches, retains one previous snapshot and preserves good dates on failure", async () => {
+test("refresh overwrites the six date windows without saving history and preserves good dates on failure", async () => {
   const store = memory();
   const sizes = [];
   const load = { store, now, warn: () => {}, gaReport: (property, payload) => {
@@ -49,10 +49,12 @@ test("refresh maps both report batches, retains one previous snapshot and preser
   } };
   const first = await refreshSnapshot(load);
   assert.deepEqual(sizes, [4, 2]);
+  assert.deepEqual(Object.keys(first.domains[0].windows).sort(), ["day", "prior_day", "prior_week", "week", "yoy_day", "yoy_week"]);
   assert.equal(first.domains[0].id, "academy-fixture");
   assert.equal(first.domains[0].propertyId, academy.propertyId);
   assert.deepEqual(first.domains[1], { id: "unmapped-fixture", name: "Example Unmapped", status: "Unavailable", reason: "No verified GA4 mapping" });
   assert.equal(first.domains[0].windows.day.metrics.averagePurchaseRevenue, 20.9);
+  first.domains[0].previousGood = { fetchedAt: first.domains[0].fetchedAt };
   const next = new Date("2026-03-09T21:00:00Z");
   const partial = await refreshSnapshot({ ...load, now: next, gaReport: (property, payload) => {
     if (payload.dateRanges.length === 2) throw new Error("baseline unavailable");
@@ -60,10 +62,16 @@ test("refresh maps both report batches, retains one previous snapshot and preser
   } });
   assert.equal(partial.domains[0].status, "Partial");
   assert.equal(partial.domains[0].windows.yoy_day, undefined);
-  assert.deepEqual(partial.domains[0].previousGood.windows, first.domains[0].windows);
+  assert.notEqual(partial.domains[0].windows.day.endDate, first.domains[0].windows.day.endDate);
+  assert.equal(partial.domains[0].previousGood, undefined);
+  partial.domains[0].previousGood = { fetchedAt: first.domains[0].fetchedAt };
+  partial.domains[0].windows.archived_day = first.domains[0].windows.day;
   const failed = await refreshSnapshot({ ...load, now: new Date("2026-03-10T21:00:00Z"), gaReport() { throw new Error("failed"); } });
   assert.equal(failed.domains[0].status, "Stale");
-  assert.deepEqual(failed.domains[0].windows, partial.domains[0].windows);
+  const { archived_day: archivedDay, ...latestWindows } = partial.domains[0].windows;
+  assert.notEqual(failed.domains[0].windows.day.endDate, archivedDay.endDate);
+  assert.deepEqual(failed.domains[0].windows, latestWindows);
+  assert.equal(failed.domains[0].previousGood, undefined);
   assert.equal(failed.domains[0].fetchedAt, partial.domains[0].fetchedAt);
 });
 
