@@ -150,6 +150,24 @@ export async function applyReports({ runAt, reports }, { store, roster, clock = 
   };
 }
 
+export async function readToolboxRoster(endpoint, fetcher = fetch) {
+  const url = new URL(endpoint);
+  url.searchParams.set("action", "milestones"); // Already includes Domains without loading the full Toolbox.
+  let payload;
+  try {
+    const response = await fetcher(url, { cache: "no-store", signal: AbortSignal.timeout(45000) });
+    if (!response.ok) throw new Error("Unsuccessful roster response");
+    payload = await response.json();
+  } catch {
+    throw new Error("ANALYTICS_ROSTER_UNAVAILABLE");
+  }
+  const domains = payload?.domains;
+  if (!Array.isArray(domains) || !domains.length || domains.some(row =>
+    typeof row?.id !== "string" || !row.id.trim() || typeof row.name !== "string" || !row.name.trim()) ||
+    new Set(domains.map(row => row.id)).size !== domains.length) throw new Error("ANALYTICS_ROSTER_INVALID");
+  return domains.map(({ id, name }) => ({ id, name }));
+}
+
 async function main() {
   const command = process.argv[2];
   if (command === "plan") {
@@ -166,15 +184,7 @@ async function main() {
     return;
   }
   const result = await applyReports(JSON.parse(readFileSync(0, "utf8")), {
-    store,
-    async roster() {
-      const response = await fetch(endpoint, { cache: "no-store", signal: AbortSignal.timeout(45000) });
-      if (!response.ok) throw new Error("ANALYTICS_ROSTER_UNAVAILABLE");
-      const { domains } = await response.json();
-      if (!Array.isArray(domains) || !domains.length || domains.some(row => !row?.id || !row?.name) ||
-          new Set(domains.map(row => row.id)).size !== domains.length) throw new Error("ANALYTICS_ROSTER_INVALID");
-      return domains.map(({ id, name }) => ({ id, name }));
-    },
+    store, roster: () => readToolboxRoster(endpoint),
   });
   console.log(`Analytics snapshot verified: ${result.domains} domains, ${result.incomplete} mapped domains incomplete.`);
   if (result.incomplete) process.exitCode = 1;

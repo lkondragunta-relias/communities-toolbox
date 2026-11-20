@@ -8,7 +8,7 @@ import { chromium } from "playwright";
 import { createServer } from "vite";
 import { comparisonChange, reportingDate, reportingWindows } from "../src/utils/analytics.js";
 import { academy, analyticsReader, parseDomains, refreshSnapshot as refresh, reportRequests, verifiedMappings } from "./analytics/snapshot.mjs";
-import { applyReports, createReportPlan, createSnapshotStore, readWriterToken } from "./analytics/refresh.mjs";
+import { applyReports, createReportPlan, createSnapshotStore, readToolboxRoster, readWriterToken } from "./analytics/refresh.mjs";
 import { MAIN_ENDPOINT } from "../.github/skills/feedback-pipeline/scripts/feedback-api.mjs";
 
 const now = new Date("2026-03-09T01:00:00Z");
@@ -261,6 +261,16 @@ test("the refresh uses only the dedicated local Keychain item when no environmen
   assert.equal(readWriterToken({ env: { TOOLBOX_ANALYTICS_WRITE_TOKEN: writerToken }, spawn: assert.fail }), writerToken);
   assert.throws(() => readWriterToken({ env: { USER: "fixture", TOOLBOX_ANALYTICS_WRITE_TOKEN: "" }, platform: "darwin",
     spawn: assert.fail }), /ANALYTICS_WRITE_TOKEN_UNAVAILABLE/);
+});
+
+test("the refresh uses the smaller Toolbox roster response and fails closed on a malformed roster", async () => {
+  const domains = await roster();
+  assert.deepEqual(await readToolboxRoster(MAIN_ENDPOINT, async url => {
+    assert.equal(url.searchParams.get("action"), "milestones");
+    return Response.json({ domains, milestones: [] });
+  }), domains);
+  await assert.rejects(readToolboxRoster(MAIN_ENDPOINT, async () => Response.json({ domains: [domains[0], domains[0]] })),
+    /ANALYTICS_ROSTER_INVALID/);
 });
 
 test("the separate Google dashboard reads only A1 for the executing Relias user with workbook access", async () => {
