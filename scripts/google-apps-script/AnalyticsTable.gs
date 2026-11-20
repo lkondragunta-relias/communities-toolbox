@@ -94,7 +94,8 @@ function analyticsSnapshotFromTable_(values) {
       if (!start && !end && Object.values(metrics).every(function (value) { return value === null; })) return;
       if (!analyticsDate_(start) || !analyticsDate_(end) || start > end ||
           !domain.fetchedAt || !domain.timeZone) throw new Error('Invalid Analytics window.');
-      (domain.windows ||= {})[window[0]] = { startDate: start, endDate: end, metrics: metrics };
+      if (!domain.windows) domain.windows = {};
+      domain.windows[window[0]] = { startDate: start, endDate: end, metrics: metrics };
     });
     if (domain.windows && (!domain.windows.day || !domain.windows.week)) throw new Error('Missing current Analytics windows.');
     snapshot.domains.push(domain);
