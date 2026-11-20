@@ -184,16 +184,83 @@ test("the Analytics route shows private snapshots and switches date and comparis
   let server;
   let browser;
   try {
-    server = await createServer({ server: { host: "127.0.0.1", port: 0 }, logLevel: "error" });
+    let cell;
+    let reportCalls = 0;
+    let snapshotReads = 0;
+    const adapters = googleAnalyticsAdapters({
+      spreadsheetId: "private-fixture", domainsSpreadsheetId: "toolbox-fixture", getAccessToken: () => "fixture-token",
+      fetchImpl: async (url, options) => {
+        assert.equal(options.headers.Authorization, "Bearer fixture-token");
+        const { hostname, pathname, searchParams } = new URL(url);
+        const method = options.method ?? "GET";
+        if (hostname === "analyticsdata.googleapis.com") {
+          assert.equal(method, "POST");
+          assert.equal(pathname, `/v1beta/properties/${academy.propertyId}:runReport`);
+          reportCalls++;
+          return Response.json(fixture(academy, JSON.parse(options.body)));
+        }
+        assert.equal(hostname, "sheets.googleapis.com");
+        if (pathname === "/v4/spreadsheets/toolbox-fixture/values/Domains") {
+          assert.equal(method, "GET");
+          return Response.json({ values: [["ID", "Name"], ...(await roster()).map(row => [row.id, row.name])] });
+        }
+        assert.equal(pathname, "/v4/spreadsheets/private-fixture/values/Analytics!A1");
+        if (method === "PUT") {
+          assert.equal(searchParams.get("valueInputOption"), "RAW");
+          const { values } = JSON.parse(options.body);
+          assert.equal(values.length, 1);
+          assert.equal(values[0].length, 1);
+          cell = values[0][0];
+          return Response.json({ updatedCells: 1 });
+        }
+        assert.equal(method, "GET");
+        snapshotReads++;
+        return Response.json(cell === undefined ? {} : { values: [[cell]] });
+      },
+    });
+    const snapshot = await refresh({ ...adapters, now, mappings });
+    assert.equal(reportCalls, 2);
+    assert.deepEqual(JSON.parse(cell), snapshot);
+    assert.deepEqual(Object.keys(snapshot.domains[0].windows).sort(), ["day", "prior_day", "prior_week", "week", "yoy_day", "yoy_week"]);
+
+    const endpoint = "/communities-toolbox/api/analytics";
+    const reader = analyticsReader({
+      authorize: request => request.headers.get("authorization") === "Bearer browser-test-only",
+      store: adapters.store, clock: () => now,
+    });
+    server = await createServer({
+      server: { host: "127.0.0.1", port: 0 }, logLevel: "error",
+      plugins: [{
+        name: "analytics-test-endpoint",
+        configureServer(vite) {
+          vite.middlewares.use(endpoint, async (req, res) => {
+            const response = await reader(new Request(`http://localhost${endpoint}`, { method: req.method, headers: req.headers }));
+            res.writeHead(response.status, Object.fromEntries(response.headers));
+            res.end(await response.text());
+          });
+        },
+      }],
+    });
     await server.listen();
-    const snapshot = await refreshSnapshot({ store: memory(), now, gaReport: fixture });
     browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    await page.route(`${origin}/communities-toolbox/api/analytics`, route => route.fulfill({ json: snapshot }));
+    const readsBeforeUnauthorized = snapshotReads;
+    const denied = await page.request.get(`${origin}${endpoint}`);
+    assert.equal(denied.status(), 403);
+    assert.equal(await denied.text(), "");
+    assert.equal(snapshotReads, readsBeforeUnauthorized);
+    await page.route(`${origin}${endpoint}`, route => route.continue({
+      headers: { ...route.request().headers(), authorization: "Bearer browser-test-only" },
+    }));
     await page.goto(`${origin}/communities-toolbox/#/analytics`);
     await page.getByLabel("Admin password").fill("analytics-browser-fixture");
+    const responsePromise = page.waitForResponse(`${origin}${endpoint}`);
     await page.getByRole("button", { name: "Unlock site" }).click();
+    const response = await responsePromise;
+    assert.equal(response.status(), 200);
+    assert.equal(response.headers()["cache-control"], "private, no-store");
+    assert.ok(snapshotReads > readsBeforeUnauthorized);
     const row = page.getByRole("row").filter({ hasText: "Relias Academy" });
     await row.waitFor();
     assert.match(await row.textContent(), /Mar 7, 2026.*Feb 28, 2026/);

@@ -11,6 +11,14 @@ The Analytics view shows the latest two completed-date windows and optional comp
 - **Read:** Mount `analyticsReader` from `scripts/analytics/snapshot.mjs` as `GET /communities-toolbox/api/analytics` on the same origin as the private deployment. Pass a server-verified leadership access check as `authorize(request)`, and use `googleAnalyticsAdapters(...).store` with a separate read-only Sheet identity (`spreadsheets.readonly`, spreadsheet Viewer). The handler denies access before reading and returns no-store responses. Do not mount it on the public Sheets web app or authorize using the Toolbox browser password.
 - **Enable:** Set `VITE_PRIVATE_ANALYTICS=true` only when building for the private host after the protected route is working. The default Pages build makes no analytics requests. Toolbox's shared HTML requests `noindex`; this does not restrict access. The scheduler, Sheet, and private hosting route are deployment prerequisites; the local Copilot GA4 connection is not the scheduled job's identity.
 
+The refresh rejects identical roster and snapshot workbook IDs. A blank or hidden `Analytics` tab in the main
+Toolbox workbook is not a privacy boundary: Google Drive shares the workbook, not individual tabs. Before changing
+that guard, review named and inherited access to the workbook, **Publish to web** settings, and every deployed
+Toolbox read path. Keep `Analytics!A1` blank until the intended audience is verified.
+
+Run `node --test scripts/analytics.test.mjs` to verify the local refresh and protected read with synthetic Google API
+responses. The browser test uses a test-only identity and does not contact Google or write to a live sheet.
+
 ## Table of contents
 
 - [About the app](#about-the-app)
