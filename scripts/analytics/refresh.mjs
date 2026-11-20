@@ -12,6 +12,7 @@ const snapshot = await refreshSnapshot(googleAnalyticsAdapters({
 }));
 
 const unmapped = snapshot.domains.filter(row => !row.propertyId).length;
-const failures = snapshot.domains.filter(row => row.propertyId && row.status !== "Reported").length;
+const failures = snapshot.domains.filter(row => row.propertyId &&
+  (["Stale", "Unavailable"].includes(row.status) || Object.keys(row.windows ?? {}).length < 6)).length;
 console.info(`Analytics refresh recorded ${snapshot.domains.length} domains (${unmapped} unmapped, ${failures} incomplete).`);
 if (failures) process.exitCode = 1;

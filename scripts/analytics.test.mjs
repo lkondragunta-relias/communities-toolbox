@@ -3,7 +3,7 @@ import test from "node:test";
 import { chromium } from "playwright";
 import { createServer } from "vite";
 import { comparisonChange, reportingDate, reportingWindows } from "../src/utils/analytics.js";
-import { academy, analyticsReader, googleAnalyticsAdapters, parseDomains, refreshSnapshot as refresh } from "./analytics/snapshot.mjs";
+import { academy, analyticsReader, googleAnalyticsAdapters, parseDomains, refreshSnapshot as refresh, verifiedMappings } from "./analytics/snapshot.mjs";
 
 const now = new Date("2026-03-09T01:00:00Z");
 const roster = async () => [{ id: "academy-fixture", name: "Relias Academy" }, { id: "unmapped-fixture", name: "Example Unmapped" }];
@@ -14,12 +14,14 @@ function memory() {
   return { read: async () => state, write: async next => { state = next; } };
 }
 function fixture(property, payload) {
+  const values = { sessions: "100", totalUsers: "80", newUsers: "40", purchaseRevenue: "62.7", ecommercePurchases: "3",
+    sessionKeyEventRate: "0.025", averagePurchaseRevenue: "20.9" };
   return {
     metadata: { currencyCode: property.currency, timeZone: property.timeZone },
     dimensionHeaders: [{ name: "dateRange" }], metricHeaders: payload.metrics,
     rows: payload.dateRanges.map(range => ({
       dimensionValues: [{ value: range.name }],
-      metricValues: ["100", "80", "40", "62.7", "3", "0.025", "20.9"].map(value => ({ value })),
+      metricValues: payload.metrics.map(({ name }) => ({ value: values[name] })),
     })),
   };
 }
@@ -106,20 +108,38 @@ test("the roster uses stable IDs and rejects duplicates and unknown configured k
   }), /unknown Toolbox domain ID/);
 });
 
-test("the default refresh queries only the verified Toolbox domain, regardless of display name", async () => {
+test("the default refresh filters verified traffic scopes and leaves unverified commerce unavailable", async () => {
   const queried = [];
   const snapshot = await refresh({
     now, store: memory(),
-    roster: async () => [{ id: "relias-academy", name: "Renamed Academy" }, { id: "academy-portals", name: "Relias Academy" }],
+    roster: async () => [...[...verifiedMappings.keys()].map(id => ({
+      id, name: id === "relias-academy" ? "Renamed Academy" : id,
+    })), { id: "academy-portals", name: "Relias Academy" }],
     gaReport(property, payload) {
-      queried.push(property.propertyId);
+      queried.push({ id: property.id, payload });
       return fixture(property, payload);
     },
   });
-  assert.deepEqual(queried, ["284885806", "284885806"]);
-  assert.equal(snapshot.domains[0].name, "Renamed Academy");
-  assert.equal(snapshot.domains[1].status, "Unavailable");
-  assert.equal(snapshot.domains[1].windows, undefined);
+  const find = id => snapshot.domains.find(domain => domain.id === id);
+  assert.equal(find("relias-academy").name, "Renamed Academy");
+  assert.equal(find("relias-academy").status, "Reported");
+  assert.equal(find("academy-portals").status, "Unavailable");
+  assert.equal(find("academy-portals").windows, undefined);
+  assert.ok(!queried.some(item => item.id === "academy-portals"));
+  const reports = queried.filter(item => item.id === "woundcare-blog");
+  assert.equal(reports.length, 2);
+  for (const { payload } of reports) {
+    assert.deepEqual(payload.metrics.map(metric => metric.name), ["sessions", "totalUsers", "newUsers"]);
+    assert.deepEqual(payload.dimensionFilter.andGroup.expressions, [
+      { filter: { fieldName: "streamId", stringFilter: { matchType: "EXACT", value: "2797075565" } } },
+      { filter: { fieldName: "hostName", inListFilter: { values: ["blog.wcei.net"], caseSensitive: true } } },
+    ]);
+  }
+  assert.equal(find("woundcare-blog").status, "Partial");
+  assert.deepEqual(find("woundcare-blog").windows.yoy_week.metrics, {
+    sessions: 100, totalUsers: 80, newUsers: 40, purchaseRevenue: null, ecommercePurchases: null,
+    sessionKeyEventRate: null, averagePurchaseRevenue: null,
+  });
 });
 
 test("the Toolbox workbook is used only for the existing Domains tab", async () => {

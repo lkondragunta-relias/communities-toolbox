@@ -1,12 +1,25 @@
 import { metrics, reportingDate, reportingWindows, shiftDate } from "../../src/utils/analytics.js";
 
 const keys = metrics.map(([key]) => key);
+const trafficKeys = ["sessions", "totalUsers", "newUsers"];
 export const academy = {
   propertyId: "284885806", host: "reliasacademy.com",
   timeZone: "America/New_York", currency: "USD",
   url: "https://analytics.google.com/analytics/web/#/a7033805p284885806/reports/intelligenthome",
 };
-export const verifiedMappings = new Map([["relias-academy", academy]]);
+const traffic = (propertyId, streamId, ...hosts) => ({
+  propertyId, scope: { streamId, hosts }, host: hosts.join(", "),
+  timeZone: "America/New_York", currency: "USD",
+});
+export const verifiedMappings = new Map([
+  ["relias-academy", academy],
+  ["nurse-enablement", traffic("359852607", "12850525022", "recruit.nurse.com")],
+  ["clinician", traffic("286492365", "2795304286", "www.clinician.com")],
+  ["freecme", traffic("286503363", "2796722651", "www.freecme.com", "info.freecme.com")],
+  ["wound-care", traffic("286565352", "2797075565", "www.wcei.net")],
+  ["woundcare-blog", traffic("286565352", "2797075565", "blog.wcei.net")],
+  ["relias-com", traffic("286559990", "2797078670", "www.relias.com")],
+]);
 
 export function parseDomains(values) {
   const [header = [], ...rows] = values ?? [];
@@ -32,19 +45,19 @@ function assertSnapshot(state) {
   return state;
 }
 
-function decodeReport(report, ranges, property) {
+function decodeReport(report, ranges, property, reportKeys) {
   const { metadata = {}, dimensionHeaders = [], metricHeaders = [], rows = [] } = report;
   if (metadata.timeZone !== property.timeZone || metadata.currencyCode !== property.currency ||
       metadata.subjectToThresholding || metadata.dataLossFromOtherRow || metadata.samplingMetadatas?.length ||
       metadata.schemaRestrictionResponse?.activeMetricRestrictions?.length || metadata.dataTruncationReasons?.length ||
-      dimensionHeaders[0]?.name !== "dateRange" || keys.some((key, index) => metricHeaders[index]?.name !== key)) {
+      dimensionHeaders[0]?.name !== "dateRange" || reportKeys.some((key, index) => metricHeaders[index]?.name !== key)) {
     throw new Error("GA4 report did not match the requested scope or quality requirements");
   }
   const result = {};
   for (const row of rows) {
     const name = row.dimensionValues?.[0]?.value;
     if (!Object.hasOwn(ranges, name) || Object.hasOwn(result, name)) throw new Error("Unexpected GA4 date range");
-    const values = keys.map((key, index) => {
+    const values = reportKeys.map((key, index) => {
       const value = row.metricValues?.[index]?.value;
       const number = Number(value);
       if (typeof value !== "string" || value.trim() === "" || !Number.isFinite(number) ||
@@ -54,8 +67,9 @@ function decodeReport(report, ranges, property) {
       }
       return number;
     });
-    result[name] = { ...ranges[name], metrics: Object.fromEntries(keys.map((key, index) => [
-      key, key === "averagePurchaseRevenue" && values[4] <= 0 ? null : values[index],
+    const valuesByKey = Object.fromEntries(reportKeys.map((key, index) => [key, values[index]]));
+    result[name] = { ...ranges[name], metrics: Object.fromEntries(keys.map(key => [
+      key, key === "averagePurchaseRevenue" && !(valuesByKey.ecommercePurchases > 0) ? null : valuesByKey[key] ?? null,
     ])) };
   }
   return result;
@@ -75,16 +89,25 @@ export async function refreshSnapshot({ roster, mappings = verifiedMappings, gaR
       continue;
     }
     const property = { ...mapping, ...domain };
+    const reportKeys = property.scope ? trafficKeys : keys;
+    const dimensionFilter = property.scope && {
+      andGroup: { expressions: [
+        { filter: { fieldName: "streamId", stringFilter: { matchType: "EXACT", value: property.scope.streamId } } },
+        { filter: { fieldName: "hostName", inListFilter: { values: property.scope.hosts, caseSensitive: true } } },
+      ] },
+    };
     const old = previous.domains.find(row => row.id === domain.id && row.propertyId === property.propertyId &&
-      row.timeZone === property.timeZone && row.currency === property.currency);
+      row.timeZone === property.timeZone && row.currency === property.currency &&
+      JSON.stringify(row.scope) === JSON.stringify(property.scope));
     const ranges = Object.entries(reportingWindows(reportingDate(now, property.timeZone)));
     const request = async entries => {
       const report = await gaReport(property, {
         currencyCode: property.currency,
         dateRanges: entries.map(([name, range]) => ({ name, ...range })),
-        metrics: keys.map(name => ({ name })), keepEmptyRows: true,
+        metrics: reportKeys.map(name => ({ name })), keepEmptyRows: true,
+        ...(dimensionFilter ? { dimensionFilter } : {}),
       });
-      return decodeReport(report, Object.fromEntries(entries), property);
+      return decodeReport(report, Object.fromEntries(entries), property, reportKeys);
     };
     try {
       const windows = await request(ranges.slice(0, 4));
@@ -102,7 +125,8 @@ export async function refreshSnapshot({ roster, mappings = verifiedMappings, gaR
         }
       }
       domains.push({
-        ...property, windows, status: Object.keys(windows).length === 6 ? "Reported" : "Partial",
+        ...property, windows, status: !property.scope && Object.keys(windows).length === 6 ? "Reported" : "Partial",
+        ...(property.scope ? { reason: "Traffic only; commerce and conversion scope not verified" } : {}),
         fetchedAt: now.toISOString(), previousGood: sameDates ? old?.previousGood : old?.windows ? {
           windows: old.windows, fetchedAt: old.fetchedAt,
         } : undefined,
