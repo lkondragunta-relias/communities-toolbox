@@ -1,4 +1,4 @@
-import { metrics, reportingDate, reportingWindows, shiftDate } from "../../src/utils/analytics.js";
+import { metrics, reportingDate, reportingWindows, withCurrentAnalyticsStatus } from "../../src/utils/analytics.js";
 
 const keys = metrics.map(([key]) => key);
 const trafficKeys = ["sessions", "totalUsers", "newUsers"];
@@ -157,17 +157,9 @@ export function analyticsReader({ authorize, store, clock = () => new Date() }) 
     if (request.method !== "GET") return new Response(null, { status: 405, headers: { ...headers, Allow: "GET" } });
     try {
       if (await authorize(request) !== true) return new Response(null, { status: 403, headers });
-      const { version, domains } = assertSnapshot(await store.read());
-      const now = clock();
-      const rows = domains.map(({ id, name, host, url, currency, timeZone, fetchedAt, status, reason, windows }) => {
-        let currentStatus = status;
-        if (windows) {
-          const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now));
-          const oldestCurrent = shiftDate(reportingDate(now, timeZone), hour >= 18 ? -1 : -2);
-          if (windows.day.endDate < oldestCurrent) currentStatus = "Stale";
-        }
-        return { id, name, host, url, currency, timeZone, fetchedAt, status: currentStatus, reason, windows };
-      });
+      const { version, domains } = withCurrentAnalyticsStatus(assertSnapshot(await store.read()), clock());
+      const rows = domains.map(({ id, name, host, url, currency, timeZone, fetchedAt, status, reason, windows }) =>
+        ({ id, name, host, url, currency, timeZone, fetchedAt, status, reason, windows }));
       return Response.json({ version, domains: rows }, { headers });
     } catch {
       return new Response(null, { status: 503, headers });

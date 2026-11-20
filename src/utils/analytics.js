@@ -31,3 +31,16 @@ export function reportingWindows(today) {
     prior_week: range(-14, -8), yoy_day: range(-365, -365), yoy_week: range(-371, -365),
   };
 }
+
+export function withCurrentAnalyticsStatus(snapshot, now = new Date()) {
+  return {
+    ...snapshot,
+    domains: snapshot.domains.map(row => {
+      if (!row.windows) return row;
+      const { timeZone } = row;
+      const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone, hour: "2-digit", hourCycle: "h23" }).format(now));
+      const oldestCurrent = shiftDate(reportingDate(now, timeZone), hour >= 18 ? -1 : -2);
+      return row.windows.day.endDate < oldestCurrent ? { ...row, status: "Stale" } : row;
+    }),
+  };
+}

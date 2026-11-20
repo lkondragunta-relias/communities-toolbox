@@ -3,6 +3,8 @@ import { comparisonChange, metrics } from "../../utils/analytics.js";
 import "../../styles/analytics.css";
 
 const enabled = import.meta.env.VITE_PRIVATE_ANALYTICS === "true";
+const googleDashboard = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(import.meta.env.VITE_GOOGLE_ANALYTICS_DASHBOARD_URL)
+  ? import.meta.env.VITE_GOOGLE_ANALYTICS_DASHBOARD_URL : null;
 const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
 const rangeLabel = window => {
   const start = new Date(`${window.startDate}T00:00:00Z`);
@@ -19,7 +21,16 @@ function formatMetric(key, value, currency) {
   return value.toLocaleString("en-US");
 }
 
-export default function AnalyticsView() {
+async function loadFromToolbox(signal) {
+  const response = await fetch(`${import.meta.env.BASE_URL}api/analytics`, {
+    credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error", signal,
+  });
+  if (response.status === 401 || response.status === 403) return { denied: true };
+  if (!response.ok) throw new Error("Snapshot unavailable");
+  return { snapshot: await response.json() };
+}
+
+export default function AnalyticsView({ loadSnapshot = googleDashboard ? null : enabled ? loadFromToolbox : null }) {
   const [period, setPeriod] = useState("day");
   const [comparison, setComparison] = useState("prior");
   const [search, setSearch] = useState("");
@@ -29,21 +40,17 @@ export default function AnalyticsView() {
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!loadSnapshot) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]);
     async function read() {
       try {
-        const response = await fetch(`${import.meta.env.BASE_URL}api/analytics`, {
-          credentials: "same-origin", mode: "same-origin", cache: "no-store", redirect: "error", signal,
-        });
-        if (response.status === 401 || response.status === 403) {
-          if (!controller.signal.aborted) setError("Sign in on the private Toolbox host to view analytics.");
+        const { denied, snapshot: result } = await loadSnapshot(signal);
+        if (denied) {
+          if (!controller.signal.aborted) setError("Sign in with an account that has access to Toolbox analytics.");
           return;
         }
-        if (!response.ok) throw new Error("Snapshot unavailable");
-        const result = await response.json();
-        if (result.version !== 1 || !Array.isArray(result.domains)) throw new Error("Invalid snapshot");
+        if (result?.version !== 1 || !Array.isArray(result.domains)) throw new Error("Invalid snapshot");
         if (!controller.signal.aborted) setSnapshot(result);
       } catch {
         if (!controller.signal.aborted) setError("Could not load analytics right now.");
@@ -51,9 +58,12 @@ export default function AnalyticsView() {
     }
     void read();
     return () => controller.abort();
-  }, [attempt]);
+  }, [attempt, loadSnapshot]);
 
-  if (!enabled) return <p className="analytics__panel">Live analytics are available only on a private Toolbox deployment.</p>;
+  if (!loadSnapshot) return googleDashboard
+    ? <div className="analytics__panel"><p>Sign in with your Relias Google account to view the dashboard.</p>
+      <a href={googleDashboard} target="_blank" rel="noopener noreferrer">Open private Analytics</a></div>
+    : <p className="analytics__panel">Live analytics are available only on a private Toolbox deployment.</p>;
   if (error) return <div className="analytics__panel"><p role="alert">{error}</p><button type="button" className="app__ghost-btn" onClick={() => { setError(""); setAttempt(value => value + 1); }}>Retry</button></div>;
   if (!snapshot) return <p role="status">Loading analytics…</p>;
 

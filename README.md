@@ -13,8 +13,10 @@ using its **Google Analytics 4 MCP** connection, then writes to the existing pri
 Apps Script. Google Sheets does not connect to GA4. No GA4 API client or combined Google credential is needed.
 
 1. Run `node scripts/analytics/refresh.mjs check` to verify the protected snapshot read before pulling reports.
-   The job receives `TOOLBOX_ANALYTICS_WRITE_TOKEN` through its protected environment, never via chat or a command
-   argument. The helper uses the confirmed main deployment from the existing runtime config.
+   The job receives `TOOLBOX_ANALYTICS_WRITE_TOKEN` through its protected environment. If it is unset on macOS,
+   the helper reads the dedicated `communities-toolbox-analytics-writer` password item in the login Keychain
+   (account: the local job runner's `$USER`). Set it through Keychain Access and approve native access if
+   prompted. Never put the token in chat or command arguments. The helper uses the confirmed main deployment.
 2. Run `node scripts/analytics/refresh.mjs plan`. For each `requests` entry, call
    `google-analytics-4.run_report` with that entry's `args` unchanged. The plan includes all six windows for each
    verified mapping, with at most four ranges per call. Keep the MCP reply objects unmodified and match them
@@ -36,11 +38,21 @@ Apps Script. Google Sheets does not connect to GA4. No GA4 API client or combine
 - Confirm Google Drive remains restricted to people allowed to see these metrics, **Publish to web** is off,
   and anonymous Toolbox GETs do not include Analytics. A tab is not a permission boundary. The job keeps one
   current value, but cannot disable Google Sheets version history.
-- For the dashboard, mount `analyticsReader` as `GET /communities-toolbox/api/analytics` on an authenticated
-  same-origin host. Pass a server-verified access check and `createSnapshotStore` using only the read token.
-  Verify a signed-out request is denied before storage access and a signed-in response is `private, no-store`.
-  Turn on `VITE_PRIVATE_ANALYTICS` only there. The public GitHub Pages build stays disabled; `noindex` does not
-  protect data or replace authentication.
+- A Google-hosted read-only dashboard can use Google sign-in with no separate server or browser credential.
+  Build it with `node scripts/analytics/google-dashboard/build.mjs` and copy `Code.gs`, `Dashboard.html`, and
+  `appsscript.json` from `dist-google-analytics-dashboard/` into a **separate** standalone Apps Script project.
+  Do not add these files to the existing public Toolbox Apps Script deployment.
+- Set `TOOLBOX_SPREADSHEET_ID` in the new project's **Script properties** to the existing workbook ID. Keep
+  the Sheets advanced service enabled with `spreadsheets.readonly`; if using a standard Google Cloud project,
+  enable the Google Sheets API there and use the Workspace **Internal** OAuth audience. Google Apps Script
+  manages user authorization; no custom browser OAuth client is needed.
+- Deploy the new Web app as **User accessing the web app**, accessible to **users in the Relias domain**.
+  Google enforces the workbook's Viewer access at read time. The app also rejects callers outside
+  `relias.com` or when the active identity differs from the execution identity. Confirm the `/exec` URL
+  rejects signed-out visitors and Relias users without workbook access, and works for a permitted user.
+- Only then set `VITE_GOOGLE_ANALYTICS_DASHBOARD_URL` to the verified `/exec` URL for the Toolbox build. The
+  Analytics tab opens it in a new tab; GitHub Pages does not fetch or serve the data. Keep
+  `VITE_PRIVATE_ANALYTICS` off on Pages. `noindex` is not access control.
 
 Run `node --test scripts/analytics.test.mjs` to verify the local MCP-to-Apps-Script-to-dashboard path with
 synthetic reports. The test does not contact Google or write to the live workbook.

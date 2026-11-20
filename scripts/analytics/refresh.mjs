@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
@@ -6,6 +7,20 @@ import { reportRequests, refreshSnapshot, verifiedMappings } from "./snapshot.mj
 
 const revision = text => createHash("sha256").update(text).digest("base64");
 const empty = { version: 1, domains: [] };
+
+export function readWriterToken({ env = process.env, platform = process.platform, spawn = spawnSync } = {}) {
+  let token = env.TOOLBOX_ANALYTICS_WRITE_TOKEN;
+  if (token === undefined && platform === "darwin" && env.USER) {
+    const result = spawn("/usr/bin/security", ["find-generic-password",
+      "-a", env.USER, "-s", "communities-toolbox-analytics-writer", "-w"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 });
+    if (!result.error && result.status === 0) token = result.stdout?.replace(/\r?\n$/, "");
+  }
+  if (typeof token !== "string" || !/^[\x21-\x7E]{32,}$/.test(token)) {
+    throw new Error("ANALYTICS_WRITE_TOKEN_UNAVAILABLE");
+  }
+  return token;
+}
 
 export function createSnapshotStore({ endpoint, token, fetcher = fetch }) {
   if (endpoint !== MAIN_ENDPOINT || typeof token !== "string" || !/^[\x21-\x7E]{32,}$/.test(token)) {
@@ -143,7 +158,7 @@ async function main() {
   }
   if (!["check", "apply"].includes(command)) throw new Error("Usage: node scripts/analytics/refresh.mjs plan|check|apply");
   const endpoint = readEndpoint();
-  const store = createSnapshotStore({ endpoint, token: process.env.TOOLBOX_ANALYTICS_WRITE_TOKEN });
+  const store = createSnapshotStore({ endpoint, token: readWriterToken() });
   if (command === "check") {
     const snapshot = await store.read();
     if (snapshot?.version !== 1 || !Array.isArray(snapshot.domains)) throw new Error("ANALYTICS_READ_INVALID");

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -7,7 +8,7 @@ import { chromium } from "playwright";
 import { createServer } from "vite";
 import { comparisonChange, reportingDate, reportingWindows } from "../src/utils/analytics.js";
 import { academy, analyticsReader, parseDomains, refreshSnapshot as refresh, reportRequests, verifiedMappings } from "./analytics/snapshot.mjs";
-import { applyReports, createReportPlan, createSnapshotStore } from "./analytics/refresh.mjs";
+import { applyReports, createReportPlan, createSnapshotStore, readWriterToken } from "./analytics/refresh.mjs";
 import { MAIN_ENDPOINT } from "../.github/skills/feedback-pipeline/scripts/feedback-api.mjs";
 
 const now = new Date("2026-03-09T01:00:00Z");
@@ -247,6 +248,84 @@ test("a lost write response is verified by reading the cell, without retrying th
   } });
   await applyReports(mcpReports(), { store, roster, clock: () => now, mappings });
   assert.equal(sheet.state().writes, 1);
+});
+
+test("the refresh uses only the dedicated local Keychain item when no environment token is set", () => {
+  const spawn = (path, args, options) => {
+    assert.equal(path, "/usr/bin/security");
+    assert.deepEqual(args, ["find-generic-password", "-a", "fixture", "-s", "communities-toolbox-analytics-writer", "-w"]);
+    assert.deepEqual(options.stdio, ["ignore", "pipe", "pipe"]);
+    return { status: 0, stdout: `${writerToken}\n` };
+  };
+  assert.equal(readWriterToken({ env: { USER: "fixture" }, platform: "darwin", spawn }), writerToken);
+  assert.equal(readWriterToken({ env: { TOOLBOX_ANALYTICS_WRITE_TOKEN: writerToken }, spawn: assert.fail }), writerToken);
+  assert.throws(() => readWriterToken({ env: { USER: "fixture", TOOLBOX_ANALYTICS_WRITE_TOKEN: "" }, platform: "darwin",
+    spawn: assert.fail }), /ANALYTICS_WRITE_TOKEN_UNAVAILABLE/);
+});
+
+test("the separate Google dashboard reads only A1 for the executing Relias user with workbook access", async () => {
+  const snapshot = await refreshSnapshot({ store: memory(), now, gaReport: fixture });
+  let active = "";
+  let effective = "owner@relias.com";
+  let reads = 0;
+  const workbookId = "fixture-workbook";
+  let forbidWorkbook = true;
+  const ctx = vm.createContext({
+    Session: { getActiveUser: () => ({ getEmail: () => active }), getEffectiveUser: () => ({ getEmail: () => effective }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: () => workbookId }) },
+    Sheets: { Spreadsheets: { Values: { get(id, range, options) {
+      assert.equal(id, workbookId);
+      assert.equal(range, "Analytics!A1");
+      assert.equal(options.valueRenderOption, "FORMULA");
+      reads++;
+      if (forbidWorkbook) throw Object.assign(new Error("Fixture denial"), { code: 403 });
+      return { values: [[JSON.stringify(snapshot)]] };
+    } } } },
+  });
+  vm.runInContext(readFileSync(new URL("./analytics/google-dashboard/Code.gs", import.meta.url), "utf8"), ctx);
+  assert.throws(() => ctx.doGet(), /Relias Google account/);
+  active = "somebody@relias.com";
+  assert.throws(() => ctx.readDashboardSnapshot(), /Relias Google account/);
+  active = effective = "somebody@example.com";
+  assert.throws(() => ctx.readDashboardSnapshot(), /Relias Google account/);
+  assert.equal(reads, 0);
+  active = effective = "somebody@relias.com";
+  assert.equal(ctx.readDashboardSnapshot().denied, true);
+  forbidWorkbook = false;
+  assert.equal(ctx.readDashboardSnapshot().snapshot.domains[0].windows.day.metrics.purchaseRevenue, 62.7);
+});
+
+test("the generated Google dashboard loads the shared UI through Apps Script RPC, not the public Toolbox API", async () => {
+  execFileSync(process.execPath, ["scripts/analytics/google-dashboard/build.mjs"], { stdio: "pipe" });
+  const html = readFileSync(new URL("../dist-google-analytics-dashboard/Dashboard.html", import.meta.url), "utf8");
+  const snapshot = await refreshSnapshot({ store: memory(), now, gaReport: fixture });
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.clock.setFixedTime(now);
+    await page.addInitScript(fixtureSnapshot => {
+      globalThis.google = { script: { run: {
+        withSuccessHandler(handler) { this.success = handler; return this; },
+        withFailureHandler() { return this; },
+        readDashboardSnapshot() { this.success({ snapshot: fixtureSnapshot }); },
+      } } };
+    }, snapshot);
+    const requests = [];
+    await page.route("**/*", route => {
+      requests.push(route.request().url());
+      return route.request().isNavigationRequest() ? route.fulfill({ contentType: "text/html", body: html }) : route.abort();
+    });
+    await page.goto("https://dashboard.example/");
+    const row = page.getByRole("row").filter({ hasText: "Relias Academy" });
+    await row.waitFor();
+    assert.match(await row.textContent(), /\$20\.90/);
+    await page.getByRole("button", { name: "Last 7 days" }).click();
+    await page.getByLabel("Compare to").selectOption("yoy");
+    assert.match(await row.textContent(), /Mar 1.*7, 2026.*Mar 2.*8, 2025/);
+    assert.deepEqual(requests, ["https://dashboard.example/"]);
+  } finally {
+    await browser.close();
+  }
 });
 
 test("MCP reports feed the protected Analytics route and comparison controls", async () => {
