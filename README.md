@@ -2,6 +2,62 @@
 
 Interactive product roadmap viewer built with React and Vite. Initiative data lives in Google Sheets; a bound Apps Script Web App serves reads and authenticated writes to the browser.
 
+### Domain analytics
+
+The Analytics view shows the latest two completed-date windows and optional comparisons. Its domain names and stable IDs come from the existing Toolbox workbook's `Domains` tab (`Title` or `ID`, and `Name` or `Label`). Unmapped domains show **Unavailable** and are not queried in GA4. Relias Academy uses verified property totals. Nurse Recruiting, Clinician, FreeCME, Wound Care, WoundCare Blog, and Relias.com show **Partial** with traffic for their configured production hosts and streams. Clinician also reports purchases and purchase revenue for that same scope. The other scoped properties do not report purchases or revenue, and none of these scoped properties reports conversion or average order value. No demonstration or live metrics are bundled with the frontend.
+
+#### Existing Project nighttime automation
+
+Use the reviewed code in the Project's authorized workspace and run only one writer at a time. Copilot reads GA4
+using its **Google Analytics 4 MCP** connection, then writes to the existing private workbook through the Toolbox
+Apps Script. Google Sheets does not connect to GA4. No GA4 API client or combined Google credential is needed.
+
+1. Run `node scripts/analytics/refresh.mjs check` to verify the protected snapshot read before pulling reports.
+   The job receives `TOOLBOX_ANALYTICS_WRITE_TOKEN` through its protected environment. If it is unset on macOS,
+   the helper reads the dedicated `communities-toolbox-analytics-writer` password item in the login Keychain
+   (account: the local job runner's `$USER`). Set it through Keychain Access and approve native access if
+   prompted. Never put the token in chat or command arguments. The helper uses the confirmed main deployment.
+2. Run `node scripts/analytics/refresh.mjs plan`. For each `requests` entry, call
+   `google-analytics-4.run_report` with that entry's `args` unchanged. The plan includes all six windows for each
+   verified mapping, with at most four ranges per call. Keep the MCP reply objects unmodified and match them
+   by request ID. Use `null` for failed calls. Do not substitute zeros or infer values.
+3. Give `node scripts/analytics/refresh.mjs apply` the JSON object `{ "runAt": "...", "reports": { ... } }` on
+   stdin, with the original `runAt` and each report under its request ID. Use a private, short-lived input if
+   needed; do not put raw reports or tokens in public logs, artifacts or Git. The helper validates the roster
+   and report shapes, replaces `Analytics!A1`, then verifies the value by reading it back. It prints only counts
+   and safe errors. If all current reports fail, it leaves the cell untouched. Individual failures preserve the
+   last good dated values when available. Resolve conflicts by rereading, not retrying a blind overwrite.
+
+#### One-time activation
+
+- The existing feedback edit actions cannot write to `Analytics!A1`. The owner must update the **existing**
+  Apps Script deployment with the reviewed `Code.gs` patch. Set distinct high-entropy (32+ characters)
+  `ANALYTICS_WRITE_TOKEN` and `ANALYTICS_READ_TOKEN` script properties. The existing browser/admin password is
+  not accepted for either action. Run `check` from the actual automation runtime; also verify the Analytics
+  MCP is available in that runtime before enabling the task. Do not add a second schedule.
+- Confirm Google Drive remains restricted to people allowed to see these metrics, **Publish to web** is off,
+  and anonymous Toolbox GETs do not include Analytics. A tab is not a permission boundary. The job keeps one
+  current value, but cannot disable Google Sheets version history.
+- A Google-hosted read-only dashboard can use Google sign-in with no separate server or browser credential.
+  Build it with `node scripts/analytics/google-dashboard/build.mjs` and copy `Code.gs`, `Dashboard.html`, and
+  `appsscript.json` from `dist-google-analytics-dashboard/` into a **separate** standalone Apps Script project.
+  Do not add these files to the existing public Toolbox Apps Script deployment.
+- Set `TOOLBOX_SPREADSHEET_ID` in the new project's **Script properties** to the existing workbook ID. Keep
+  the Sheets advanced service enabled with `spreadsheets.readonly`; if using a standard Google Cloud project,
+  enable the Google Sheets API there and use the Workspace **Internal** OAuth audience. Google Apps Script
+  manages user authorization; no custom browser OAuth client is needed.
+- Deploy the new Web app as **User accessing the web app**, accessible to **users in the Relias domain**.
+  Google enforces the workbook's Viewer access at read time. The app also rejects callers outside
+  `relias.com` or when the active identity differs from the execution identity. Confirm the `/exec` URL
+  rejects signed-out visitors and Relias users without workbook access, and works for a permitted user.
+- Only then set the GitHub Actions repository variable `VITE_GOOGLE_ANALYTICS_DASHBOARD_URL` to the verified
+  `/exec` URL for the Toolbox build. The
+  Analytics tab opens it in a new tab; GitHub Pages does not fetch or serve the data. Keep
+  `VITE_PRIVATE_ANALYTICS` off on Pages. `noindex` is not access control.
+
+Run `node --test scripts/analytics.test.mjs` to verify the local MCP-to-Apps-Script-to-dashboard path with
+synthetic reports. The test does not contact Google or write to the live workbook.
+
 ## Table of contents
 
 - [About the app](#about-the-app)

@@ -12,6 +12,7 @@ node_modules
 .env.local
 dist
 dist-ssr
+dist-google-analytics-dashboard
 *.local
 
 # Editor directories and files

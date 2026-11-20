@@ -78,6 +78,9 @@ function doPostLocked_(e) {
     if (body && body.action === 'submitFeedback') {
       return jsonResponse(submitFeedback_(body));
     }
+    if (body && (body.action === 'readAnalyticsSnapshot' || body.action === 'replaceAnalyticsSnapshot')) {
+      return jsonResponse(analyticsSnapshotAction_(body));
+    }
     if (!body.adminToken || body.adminToken !== getAdminToken_()) {
       return jsonResponse({ ok: false, code: 'AUTH', error: 'Invalid admin token.' }, 403);
     }
@@ -136,6 +139,50 @@ function doPostLocked_(e) {
 function getAdminToken_() {
   var fromProps = PropertiesService.getScriptProperties().getProperty('ADMIN_TOKEN');
   return fromProps || DEFAULT_ADMIN_TOKEN;
+}
+
+function analyticsSnapshotAction_(body) {
+  var replace = body.action === 'replaceAnalyticsSnapshot';
+  var props = PropertiesService.getScriptProperties();
+  var writer = props.getProperty('ANALYTICS_WRITE_TOKEN');
+  var reader = props.getProperty('ANALYTICS_READ_TOKEN');
+  var token = body.analyticsToken;
+  var matches = function (expected) {
+    return typeof expected === 'string' && /^[\x21-\x7e]{32,}$/.test(expected) && token === expected;
+  };
+  if (writer && writer === reader) return { ok: false, code: 'AUTH' };
+  if (!(matches(writer) || (!replace && matches(reader)))) return { ok: false, code: 'AUTH' };
+  if (Object.keys(body).some(function (key) {
+    return ['action', 'analyticsToken'].indexOf(key) < 0 &&
+      !(replace && ['expectedRevision', 'snapshot'].indexOf(key) >= 0);
+  })) return { ok: false, code: 'INVALID' };
+  var sheet = ss_().getSheetByName('Analytics');
+  if (!sheet) return { ok: false, code: 'ANALYTICS_TAB_MISSING' };
+  var cell = sheet.getRange(1, 1);
+  if (cell.getFormula()) return { ok: false, code: 'ANALYTICS_CELL_FORMULA' };
+  var current = cell.getValue();
+  if (typeof current !== 'string') return { ok: false, code: 'ANALYTICS_CELL_INVALID' };
+  var revision = analyticsRevision_(current);
+  if (!replace) return { ok: true, snapshot: current, revision: revision };
+  if (body.expectedRevision !== revision) return { ok: false, code: 'CONFLICT' };
+  var text = body.snapshot;
+  if (typeof text !== 'string' || text.length > 49000 || text.charAt(0) !== '{') return { ok: false, code: 'INVALID' };
+  var snapshot;
+  try { snapshot = JSON.parse(text); } catch (err) { return { ok: false, code: 'INVALID' }; }
+  if (snapshot.version !== 1 || !milestoneTimestamp_(snapshot.attemptedAt) ||
+      !Array.isArray(snapshot.domains) || !snapshot.domains.length) return { ok: false, code: 'INVALID' };
+  var expectedIds = readDomains_().map(function (domain) { return domain.id; }).sort();
+  var actualIds = snapshot.domains.map(function (domain) { return domain && domain.id; }).sort();
+  if (JSON.stringify(actualIds) !== JSON.stringify(expectedIds)) return { ok: false, code: 'ROSTER_CHANGED' };
+  cell.setValue(text);
+  SpreadsheetApp.flush();
+  return { ok: true, revision: analyticsRevision_(text) };
+}
+
+function analyticsRevision_(text) {
+  return Utilities.base64Encode(Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8
+  ));
 }
 
 /* =============================== Milestones =============================== */
@@ -392,7 +439,7 @@ function writeMilestone_(body) {
 var FEEDBACK_CATEGORIES = ['Report a bug', 'Request a feature', 'Request a change', 'Share feedback', 'Report a data correction'];
 var FEEDBACK_PAGES = {
   overview: 'overview', timeline: 'roadmap', table: 'projects', incidents: 'operations',
-  sites: 'cookiebot', org: 'prod-eng-org', settings: 'settings', milestones: 'milestones',
+  sites: 'cookiebot', analytics: 'analytics', org: 'prod-eng-org', settings: 'settings', milestones: 'milestones',
 };
 var FEEDBACK_HEADERS = ['ID', 'Submitted At', 'Name', 'Category', 'Page', 'Page URL', 'Message', 'Status', 'Request ID', 'Request Fingerprint', 'Issue URL', 'PR URL', 'Updated At'];
 var FEEDBACK_STATUSES = ['New', 'Issue created', 'In progress', 'In review', 'Done', 'Declined', 'Needs info', 'Needs approval'];

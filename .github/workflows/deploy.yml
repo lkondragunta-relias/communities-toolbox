@@ -32,6 +32,7 @@ jobs:
           VITE_SHEETS_API_URL: ${{ secrets.VITE_SHEETS_API_URL }}
           VITE_GOOGLE_SHEET_URL: ${{ secrets.VITE_GOOGLE_SHEET_URL }}
           VITE_ADMIN_TOKEN: ${{ secrets.VITE_ADMIN_TOKEN }}
+          VITE_GOOGLE_ANALYTICS_DASHBOARD_URL: ${{ vars.VITE_GOOGLE_ANALYTICS_DASHBOARD_URL }}
 
       - uses: actions/upload-pages-artifact@v3
         with:
