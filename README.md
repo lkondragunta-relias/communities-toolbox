@@ -375,6 +375,12 @@ Use `npm run test:feedback-pipeline` for helper safety/contract tests,
 real YAML parser. The YAML package is development-only; the daily helper
 requires no package installation.
 
+## Cookiebot reports
+
+The Cookiebot tab flags cookies explicitly marked **Blocked until accepted by user: No** in both older and newer English `.htm` scan exports. The table and CSV use the same flagged list.
+
+Reports are parsed when uploaded. If an earlier upload incorrectly shows zero unblocked cookies, re-upload the original `.htm` after the fix is deployed, then remove the stale entry once the corrected report is visible.
+
 ## Communities Eng & Product Organization
 
 **Prod & Eng Org**, after Cookiebot in the sidebar, opens `#/prod-eng-org`.
