@@ -83,9 +83,37 @@ function fieldValue(block, label) {
   return m ? stripTags(m[1]) : "";
 }
 
-/** Full parse → { summary, cookies, notBlocked }. */
-export function parseCookiebotHtml(html) {
-  const summary = parseSummary(html);
+function parseModernCookies(html, headings) {
+  const cookies = [];
+  for (let i = 0; i < headings.length; i++) {
+    const heading = headings[i];
+    const category = stripTags(heading[1]).replace(/^Category:\s*/i, "");
+    // The New and Removed sections repeat cookie details but aren't part of the scan inventory.
+    if (!CATEGORIES.includes(category)) continue;
+    const section = html.slice(heading.index + heading[0].length, headings[i + 1]?.index);
+    for (const [, row] of section.matchAll(/<tr\b[^>]*>((?:(?!<\/?tr\b)[\s\S])*?)<\/tr>/gi)) {
+      const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)];
+      const details = cells[0]?.[1] || "";
+      const name = details.match(/<span\b[^>]*\bclass=["']cookie-name["'][^>]*>([\s\S]*?)<\/span>/i);
+      if (!name) continue;
+
+      cookies.push({
+        category,
+        name: stripTags(name[1]),
+        provider: stripTags(cells[1]?.[1] || ""),
+        type: stripTags(cells[2]?.[1] || ""),
+        duration: stripTags(cells[3]?.[1] || ""),
+        firstUrl: fieldValue(details, "First found URL"),
+        initiator: fieldValue(details, "Initiator"),
+        source: fieldValue(details, "Source"),
+        blocked: fieldValue(details, "Blocked until accepted by user"),
+      });
+    }
+  }
+  return cookies;
+}
+
+function parseLegacyCookies(html) {
   const markers = categoryMarkers(html);
   const catAt = (pos) => {
     let cur = "Unclassified";
@@ -132,6 +160,15 @@ export function parseCookiebotHtml(html) {
       blocked: blockedM ? blockedM[1] : "",
     });
   }
+
+  return cookies;
+}
+
+/** Full parse → { summary, cookies, notBlocked }. */
+export function parseCookiebotHtml(html) {
+  const summary = parseSummary(html);
+  const headings = [...html.matchAll(/<span\b[^>]*\bclass=["']cat-name["'][^>]*>([\s\S]*?)<\/span>/gi)];
+  const cookies = headings.length ? parseModernCookies(html, headings) : parseLegacyCookies(html);
 
   // Cookies set before consent (the compliance risks), de-duplicated.
   const seen = new Set();

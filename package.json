@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test:cookiebot": "node --test scripts/cookiebot.test.mjs",
     "test:roadmap": "node --test scripts/roadmap.test.mjs scripts/roadmap-id.test.mjs",
     "test:incidents": "node --test scripts/incidents.test.mjs",
     "test:milestones": "node --test scripts/milestones.test.mjs scripts/milestones-ui.test.mjs",
