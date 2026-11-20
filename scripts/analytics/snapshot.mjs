@@ -39,7 +39,6 @@ export function parseDomains(values) {
   if (!domains.size) throw new Error("Toolbox Domains tab contains no domain IDs");
   return [...domains.values()];
 }
-
 function assertSnapshot(state) {
   if (state?.version !== 1 || !Array.isArray(state.domains)) throw new Error("Invalid analytics snapshot");
   return state;
@@ -75,6 +74,23 @@ function decodeReport(report, ranges, property, reportKeys) {
   return result;
 }
 
+export function reportRequests(property, now) {
+  const ranges = Object.entries(reportingWindows(reportingDate(now, property.timeZone)));
+  const reportKeys = property.scope ? trafficKeys : keys;
+  const dimensionFilter = property.scope && {
+    andGroup: { expressions: [
+      { filter: { fieldName: "streamId", stringFilter: { matchType: "EXACT", value: property.scope.streamId } } },
+      { filter: { fieldName: "hostName", inListFilter: { values: property.scope.hosts, caseSensitive: true } } },
+    ] },
+  };
+  return [ranges.slice(0, 4), ranges.slice(4)].map(entries => ({
+    currencyCode: property.currency,
+    dateRanges: entries.map(([name, range]) => ({ name, ...range })),
+    metrics: reportKeys.map(name => ({ name })),
+    ...(dimensionFilter ? { dimensionFilter } : {}),
+  }));
+}
+
 export async function refreshSnapshot({ roster, mappings = verifiedMappings, gaReport, store, now = new Date(), warn = console.warn }) {
   const toolboxDomains = await roster();
   for (const id of mappings.keys()) {
@@ -89,31 +105,21 @@ export async function refreshSnapshot({ roster, mappings = verifiedMappings, gaR
       continue;
     }
     const property = { ...mapping, ...domain };
-    const reportKeys = property.scope ? trafficKeys : keys;
-    const dimensionFilter = property.scope && {
-      andGroup: { expressions: [
-        { filter: { fieldName: "streamId", stringFilter: { matchType: "EXACT", value: property.scope.streamId } } },
-        { filter: { fieldName: "hostName", inListFilter: { values: property.scope.hosts, caseSensitive: true } } },
-      ] },
-    };
     const old = previous.domains.find(row => row.id === domain.id && row.propertyId === property.propertyId &&
       row.timeZone === property.timeZone && row.currency === property.currency &&
       JSON.stringify(row.scope) === JSON.stringify(property.scope));
     const ranges = Object.entries(reportingWindows(reportingDate(now, property.timeZone)));
-    const request = async entries => {
-      const report = await gaReport(property, {
-        currencyCode: property.currency,
-        dateRanges: entries.map(([name, range]) => ({ name, ...range })),
-        metrics: reportKeys.map(name => ({ name })), keepEmptyRows: true,
-        ...(dimensionFilter ? { dimensionFilter } : {}),
-      });
-      return decodeReport(report, Object.fromEntries(entries), property, reportKeys);
+    const request = async payload => {
+      const report = await gaReport(property, payload);
+      return decodeReport(report, Object.fromEntries(payload.dateRanges.map(({ name, ...range }) => [name, range])),
+        property, payload.metrics.map(({ name }) => name));
     };
+    const [current, yearly] = reportRequests(property, now);
     try {
-      const windows = await request(ranges.slice(0, 4));
+      const windows = await request(current);
       if (!windows.day || !windows.week) throw new Error("Current GA4 windows are unavailable");
       try {
-        Object.assign(windows, await request(ranges.slice(4)));
+        Object.assign(windows, await request(yearly));
       } catch {
         warn(`Analytics year-over-year comparison unavailable for ${property.id}`);
       }
@@ -166,52 +172,5 @@ export function analyticsReader({ authorize, store, clock = () => new Date() }) 
     } catch {
       return new Response(null, { status: 503, headers });
     }
-  };
-}
-
-export function googleAnalyticsAdapters({ getAccessToken, spreadsheetId, domainsSpreadsheetId, allowSharedWorkbook = false, fetchImpl = fetch }) {
-  if (domainsSpreadsheetId && domainsSpreadsheetId === spreadsheetId && allowSharedWorkbook !== true) {
-    throw new Error("Analytics snapshots require a separate spreadsheet unless same-workbook storage is explicitly enabled");
-  }
-  const auth = async url => {
-    const token = await getAccessToken();
-    if (!token) throw new Error("Google access token unavailable");
-    return fetchImpl(url.endpoint, {
-      ...url.options, redirect: "error", signal: AbortSignal.timeout(20_000),
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    });
-  };
-  async function json(endpoint, options) {
-    for (let attempt = 0; ; attempt++) {
-      const response = await auth({ endpoint, options });
-      if (response.ok) return response.json();
-      if (![429, 500, 503].includes(response.status) || attempt >= 2) throw new Error(`Google API returned HTTP ${response.status}`);
-      await new Promise(resolve => setTimeout(resolve, (2 ** attempt) * 500));
-    }
-  }
-  const range = "Analytics!A1";
-  const endpoint = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`;
-  return {
-    async roster() {
-      if (!domainsSpreadsheetId) throw new Error("The existing Toolbox spreadsheet ID is required");
-      const result = await json(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(domainsSpreadsheetId)}/values/Domains`);
-      return parseDomains(result.values);
-    },
-    gaReport(property, payload) {
-      return json(`https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(property.propertyId)}:runReport`,
-        { method: "POST", body: JSON.stringify(payload) });
-    },
-    store: {
-      async read() {
-        const response = await json(endpoint);
-        const cell = response.values?.[0]?.[0];
-        return cell === undefined ? { version: 1, domains: [] } : assertSnapshot(JSON.parse(cell));
-      },
-      async write(snapshot) {
-        const value = JSON.stringify(snapshot);
-        if (value.length > 49_000) throw new Error("Analytics snapshot exceeds the Sheet cell limit");
-        await json(`${endpoint}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ values: [[value]] }) });
-      },
-    },
   };
 }

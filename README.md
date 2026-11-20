@@ -6,29 +6,44 @@ Interactive product roadmap viewer built with React and Vite. Initiative data li
 
 The Analytics view shows the latest two completed-date windows and optional comparisons. Its domain names and stable IDs come from the existing Toolbox workbook's `Domains` tab (`Title` or `ID`, and `Name` or `Label`). Unmapped domains show **Unavailable** and are not queried in GA4. Relias Academy uses verified property totals. Nurse Recruiting, Clinician, FreeCME, Wound Care, WoundCare Blog, and Relias.com show **Partial** with sessions, total users, and new users for their configured production hosts and streams. Their purchase, conversion, and average order value metrics stay blank until the relevant event coverage is verified. No demonstration or live metrics are bundled with the frontend.
 
-- **Refresh:** Run `node scripts/analytics/refresh.mjs` as a single-writer job, daily at 5 p.m. Eastern. Provision a private spreadsheet with an `Analytics` tab and supply its ID via `TOOLBOX_ANALYTICS_SHEET_ID`. At invocation, the job identity needs a short-lived access token in `TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN` scoped to `analytics.readonly` and `spreadsheets`, Viewer access to the mapped properties, and edit access to that spreadsheet. Keep the token out of source, logs and Vite variables. Enable both Google APIs. The job overwrites `Analytics!A1` with one snapshot: yesterday and the last seven completed days, each with a previous-period and 52-week comparison. There is no separate snapshot archive, daily history, or transaction data. If a refresh fails, the same slots keep the last valid figures with their original dates and a **Stale** status. Unavailable or missing windows for mapped domains cause a nonzero exit; deliberately blank metrics on traffic-only rows do not.
-- **Domain roster:** Set `TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID` to the existing Toolbox workbook. The job only reads
-  the `Domains` tab. Give the job identity Viewer access when the roster is in a separate workbook. See
-  `verifiedMappings` in `scripts/analytics/snapshot.mjs` for exact property and traffic scopes. The refresh rejects a
-  mapped key that is not in the roster and never infers mappings from display names.
-- **Read:** Mount `analyticsReader` from `scripts/analytics/snapshot.mjs` as `GET /communities-toolbox/api/analytics` on the same origin as the private deployment. Pass a server-verified leadership access check as `authorize(request)`, and use `googleAnalyticsAdapters(...).store` with a separate read-only Sheet identity (`spreadsheets.readonly`, spreadsheet Viewer). The handler denies access before reading and returns no-store responses. Do not mount it on the public Sheets web app or authorize using the Toolbox browser password.
-- **Enable:** Set `VITE_PRIVATE_ANALYTICS=true` only when building for the private host after the protected route is working. The default Pages build makes no analytics requests. Toolbox's shared HTML requests `noindex`; this does not restrict access. The scheduler, Sheet, and private hosting route are deployment prerequisites; the local Copilot GA4 connection is not the scheduled job's identity.
+#### Existing Project nighttime automation
 
-**Same-workbook setup:** The refresh rejects identical roster and snapshot workbook IDs unless the operator sets
-`TOOLBOX_ANALYTICS_ALLOW_SHARED_WORKBOOK=true` in the server job environment. Before opting in:
+Use the reviewed code in the Project's authorized workspace and run only one writer at a time. Copilot reads GA4
+using its **Google Analytics 4 MCP** connection, then writes to the existing private workbook through the Toolbox
+Apps Script. Google Sheets does not connect to GA4. No GA4 API client or combined Google credential is needed.
 
-1. Review named, group, link, and inherited workbook access, including the refresh and dashboard identities. Only
-   use the same workbook if everyone with access is allowed to see Analytics. Google Drive shares the workbook,
-   not individual tabs. Hiding or protecting an `Analytics` tab does not restrict who can read it.
-2. Verify the workbook and tab are not published via **Publish to web**. Check any deployed Apps Script outputs
-   and other public read paths to make sure they do not include Analytics. Keep `Analytics!A1` blank until these
-   checks pass, and repeat them if sharing, publication, or public readers change.
-3. Use the existing Toolbox workbook ID for both settings. The scheduler needs workbook Editor access, even
-   though the code reads only `Domains` and writes only `Analytics!A1`. If that scope or audience is too broad,
-   use a separate restricted workbook. The job keeps one current value, but cannot disable Google version history.
+1. Run `node scripts/analytics/refresh.mjs check` to verify the protected snapshot read before pulling reports.
+   The job receives `TOOLBOX_ANALYTICS_WRITE_TOKEN` through its protected environment, never via chat or a command
+   argument. The helper uses the confirmed main deployment from the existing runtime config.
+2. Run `node scripts/analytics/refresh.mjs plan`. For each `requests` entry, call
+   `google-analytics-4.run_report` with that entry's `args` unchanged. The plan includes all six windows for each
+   verified mapping, with at most four ranges per call. Keep the MCP reply objects unmodified and match them
+   by request ID. Use `null` for failed calls. Do not substitute zeros or infer values.
+3. Give `node scripts/analytics/refresh.mjs apply` the JSON object `{ "runAt": "...", "reports": { ... } }` on
+   stdin, with the original `runAt` and each report under its request ID. Use a private, short-lived input if
+   needed; do not put raw reports or tokens in public logs, artifacts or Git. The helper validates the roster
+   and report shapes, replaces `Analytics!A1`, then verifies the value by reading it back. It prints only counts
+   and safe errors. If all current reports fail, it leaves the cell untouched. Individual failures preserve the
+   last good dated values when available. Resolve conflicts by rereading, not retrying a blind overwrite.
 
-Run `node --test scripts/analytics.test.mjs` to verify the local refresh and protected read with synthetic Google API
-responses. The browser test uses a test-only identity and does not contact Google or write to a live sheet.
+#### One-time activation
+
+- The existing feedback edit actions cannot write to `Analytics!A1`. The owner must update the **existing**
+  Apps Script deployment with the reviewed `Code.gs` patch. Set distinct high-entropy (32+ characters)
+  `ANALYTICS_WRITE_TOKEN` and `ANALYTICS_READ_TOKEN` script properties. The existing browser/admin password is
+  not accepted for either action. Run `check` from the actual automation runtime; also verify the Analytics
+  MCP is available in that runtime before enabling the task. Do not add a second schedule.
+- Confirm Google Drive remains restricted to people allowed to see these metrics, **Publish to web** is off,
+  and anonymous Toolbox GETs do not include Analytics. A tab is not a permission boundary. The job keeps one
+  current value, but cannot disable Google Sheets version history.
+- For the dashboard, mount `analyticsReader` as `GET /communities-toolbox/api/analytics` on an authenticated
+  same-origin host. Pass a server-verified access check and `createSnapshotStore` using only the read token.
+  Verify a signed-out request is denied before storage access and a signed-in response is `private, no-store`.
+  Turn on `VITE_PRIVATE_ANALYTICS` only there. The public GitHub Pages build stays disabled; `noindex` does not
+  protect data or replace authentication.
+
+Run `node --test scripts/analytics.test.mjs` to verify the local MCP-to-Apps-Script-to-dashboard path with
+synthetic reports. The test does not contact Google or write to the live workbook.
 
 ## Table of contents
 

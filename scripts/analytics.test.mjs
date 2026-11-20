@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import vm from "node:vm";
 import { chromium } from "playwright";
 import { createServer } from "vite";
 import { comparisonChange, reportingDate, reportingWindows } from "../src/utils/analytics.js";
-import { academy, analyticsReader, googleAnalyticsAdapters, parseDomains, refreshSnapshot as refresh, verifiedMappings } from "./analytics/snapshot.mjs";
+import { academy, analyticsReader, parseDomains, refreshSnapshot as refresh, reportRequests, verifiedMappings } from "./analytics/snapshot.mjs";
+import { applyReports, createReportPlan, createSnapshotStore } from "./analytics/refresh.mjs";
+import { MAIN_ENDPOINT } from "../.github/skills/feedback-pipeline/scripts/feedback-api.mjs";
 
 const now = new Date("2026-03-09T01:00:00Z");
 const roster = async () => [{ id: "academy-fixture", name: "Relias Academy" }, { id: "unmapped-fixture", name: "Example Unmapped" }];
@@ -150,36 +155,101 @@ test("the default refresh filters verified traffic scopes and leaves unverified 
   });
 });
 
-test("the roster reads Domains and a matching snapshot workbook requires explicit opt-in", async () => {
-  for (const allowSharedWorkbook of [undefined, false, "true"]) {
-    assert.throws(() => googleAnalyticsAdapters({ spreadsheetId: "same", domainsSpreadsheetId: "same", allowSharedWorkbook }),
-      /separate spreadsheet unless same-workbook storage is explicitly enabled/);
-  }
-  const { roster } = googleAnalyticsAdapters({ spreadsheetId: "private", domainsSpreadsheetId: "toolbox", getAccessToken: () => "fixture-token",
-    fetchImpl: async (url, options) => {
-      assert.match(url, /\/spreadsheets\/toolbox\/values\/Domains$/);
-      assert.equal(options.method ?? "GET", "GET");
-      return Response.json({ values: [["ID", "Name"], ["domain-key", "Toolbox Domain"]] });
-    } });
-  assert.deepEqual(await roster(), [{ id: "domain-key", name: "Toolbox Domain" }]);
-});
+const writerToken = "synthetic-writer-token-0123456789abcdef";
+const readerToken = "synthetic-reader-token-0123456789abcdef";
+async function sheetFixture() {
+  let cell = "";
+  let reads = 0;
+  let writes = 0;
+  const domains = await roster();
+  const ctx = vm.createContext({
+    PropertiesService: { getScriptProperties: () => ({ getProperty: key => ({
+      ADMIN_TOKEN: "old-admin", ANALYTICS_WRITE_TOKEN: writerToken, ANALYTICS_READ_TOKEN: readerToken,
+    })[key] }) },
+    SpreadsheetApp: { getActiveSpreadsheet: () => ({
+      getSheetByName(name) {
+        assert.equal(name, "Analytics");
+        return { getRange(row, col) {
+          assert.deepEqual([row, col], [1, 1]);
+          return {
+            getFormula: () => "", getValue() { reads++; return cell; },
+            setValue(value) { writes++; cell = value; },
+          };
+        } };
+      },
+    }), flush() {} },
+    LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
+    Utilities: { DigestAlgorithm: { SHA_256: "sha256" }, Charset: { UTF_8: "utf8" },
+      computeDigest: (algorithm, value) => createHash(algorithm).update(value).digest(),
+      base64Encode: value => Buffer.from(value).toString("base64"),
+    },
+  });
+  vm.runInContext(readFileSync(new URL("./google-apps-script/Code.gs", import.meta.url), "utf8"), ctx);
+  Object.assign(ctx, { readDomains_: () => domains, readRoadmap_: () => ({ domains }), jsonResponse: value => value });
+  const post = body => ctx.doPost({ postData: { contents: JSON.stringify(body) } });
+  const fetcher = async (url, options) => {
+    assert.equal(url, MAIN_ENDPOINT);
+    assert.equal(options.method, "POST");
+    return Response.json(post(JSON.parse(options.body)));
+  };
+  return { ctx, post, fetcher, state: () => ({ cell, reads, writes }) };
+}
 
-test("the Sheets adapter writes the complete snapshot without exporting its previous version", async () => {
-  const requests = [];
-  const { store } = googleAnalyticsAdapters({ getAccessToken: () => "fixture-token", spreadsheetId: "fixture",
-    fetchImpl: async (url, options) => {
-      requests.push({ url, options });
-      return Response.json({});
-    } });
-  assert.deepEqual(await store.read(), { version: 1, domains: [] });
-  const snapshot = { version: 1, domains: [] };
+test("Apps Script denies legacy tokens, restricts writer access, and does not expose Analytics via GET", async () => {
+  const sheet = await sheetFixture();
+  assert.equal(sheet.post({ action: "readAnalyticsSnapshot", analyticsToken: "old-admin" }).code, "AUTH");
+  assert.equal(sheet.post({ action: "replaceAnalyticsSnapshot", analyticsToken: readerToken }).code, "AUTH");
+  assert.equal(sheet.state().reads, 0);
+  assert.equal(sheet.ctx.doGet({ parameter: { action: "readAnalyticsSnapshot" } }).snapshot, undefined);
+  const store = createSnapshotStore({ endpoint: MAIN_ENDPOINT, token: writerToken, fetcher: sheet.fetcher });
+  await store.read();
+  const prior = sheet.post({ action: "readAnalyticsSnapshot", analyticsToken: writerToken });
+  const snapshot = { version: 1, attemptedAt: now.toISOString(), domains: await roster() };
   await store.write(snapshot);
-  assert.match(requests[1].url, /Analytics!A1\?valueInputOption=RAW$/);
-  assert.equal(requests[1].options.method, "PUT");
-  assert.deepEqual(JSON.parse(requests[1].options.body), { values: [[JSON.stringify(snapshot)]] });
+  const conflict = sheet.post({ action: "replaceAnalyticsSnapshot", analyticsToken: writerToken,
+    expectedRevision: prior.revision, snapshot: JSON.stringify(snapshot) });
+  assert.equal(conflict.code, "CONFLICT");
+  assert.equal(sheet.state().writes, 1);
 });
 
-test("the opted-in shared workbook feeds the protected Analytics route and comparison controls", async () => {
+function mcpReports() {
+  const plan = createReportPlan(now, mappings);
+  const reports = reportRequests(academy, now).map((request, index) => {
+    assert.deepEqual(plan.requests[index].args.metrics, request.metrics.map(metric => metric.name));
+    const report = fixture(academy, request);
+    return [plan.requests[index].id, {
+      metadata: { currency_code: report.metadata.currencyCode, time_zone: report.metadata.timeZone },
+      dimension_headers: report.dimensionHeaders, metric_headers: report.metricHeaders,
+      rows: report.rows.map(row => ({ dimension_values: row.dimensionValues, metric_values: row.metricValues })),
+    }];
+  });
+  return { runAt: plan.runAt, reports: Object.fromEntries(reports) };
+}
+
+test("the refresh leaves the existing cell untouched if every MCP report fails", async () => {
+  const sheet = await sheetFixture();
+  const store = createSnapshotStore({ endpoint: MAIN_ENDPOINT, token: writerToken, fetcher: sheet.fetcher });
+  const run = mcpReports();
+  await applyReports(run, { store, roster, clock: () => now, mappings });
+  const { cell, writes } = sheet.state();
+  await assert.rejects(applyReports({ ...run, reports: {} }, { store, roster, clock: () => now, mappings }),
+    /ANALYTICS_NO_CURRENT_REPORTS/);
+  assert.equal(sheet.state().cell, cell);
+  assert.equal(sheet.state().writes, writes);
+});
+
+test("a lost write response is verified by reading the cell, without retrying the write", async () => {
+  const sheet = await sheetFixture();
+  const store = createSnapshotStore({ endpoint: MAIN_ENDPOINT, token: writerToken, async fetcher(url, options) {
+    const response = await sheet.fetcher(url, options);
+    if (JSON.parse(options.body).action === "replaceAnalyticsSnapshot") throw new Error("lost receipt");
+    return response;
+  } });
+  await applyReports(mcpReports(), { store, roster, clock: () => now, mappings });
+  assert.equal(sheet.state().writes, 1);
+});
+
+test("MCP reports feed the protected Analytics route and comparison controls", async () => {
   const keys = ["VITE_ADMIN_TOKEN", "VITE_PRIVATE_ANALYTICS"];
   const prior = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   process.env.VITE_ADMIN_TOKEN = "analytics-browser-fixture";
@@ -187,50 +257,19 @@ test("the opted-in shared workbook feeds the protected Analytics route and compa
   let server;
   let browser;
   try {
-    let cell;
-    let reportCalls = 0;
-    let snapshotReads = 0;
-    const adapters = googleAnalyticsAdapters({
-      spreadsheetId: "toolbox-fixture", domainsSpreadsheetId: "toolbox-fixture", allowSharedWorkbook: true,
-      getAccessToken: () => "fixture-token",
-      fetchImpl: async (url, options) => {
-        assert.equal(options.headers.Authorization, "Bearer fixture-token");
-        const { hostname, pathname, searchParams } = new URL(url);
-        const method = options.method ?? "GET";
-        if (hostname === "analyticsdata.googleapis.com") {
-          assert.equal(method, "POST");
-          assert.equal(pathname, `/v1beta/properties/${academy.propertyId}:runReport`);
-          reportCalls++;
-          return Response.json(fixture(academy, JSON.parse(options.body)));
-        }
-        assert.equal(hostname, "sheets.googleapis.com");
-        if (pathname === "/v4/spreadsheets/toolbox-fixture/values/Domains") {
-          assert.equal(method, "GET");
-          return Response.json({ values: [["ID", "Name"], ...(await roster()).map(row => [row.id, row.name])] });
-        }
-        assert.equal(pathname, "/v4/spreadsheets/toolbox-fixture/values/Analytics!A1");
-        if (method === "PUT") {
-          assert.equal(searchParams.get("valueInputOption"), "RAW");
-          const { values } = JSON.parse(options.body);
-          assert.equal(values.length, 1);
-          assert.equal(values[0].length, 1);
-          cell = values[0][0];
-          return Response.json({ updatedCells: 1 });
-        }
-        assert.equal(method, "GET");
-        snapshotReads++;
-        return Response.json(cell === undefined ? {} : { values: [[cell]] });
-      },
-    });
-    const snapshot = await refresh({ ...adapters, now, mappings });
-    assert.equal(reportCalls, 2);
-    assert.deepEqual(JSON.parse(cell), snapshot);
+    const sheet = await sheetFixture();
+    const config = { endpoint: MAIN_ENDPOINT, fetcher: sheet.fetcher };
+    const store = createSnapshotStore({ ...config, token: writerToken });
+    const run = mcpReports();
+    assert.deepEqual(await applyReports(run, { store, roster, clock: () => now, mappings }), { domains: 2, incomplete: 0 });
+    const snapshot = JSON.parse(sheet.state().cell);
+    assert.equal(sheet.state().writes, 1);
     assert.deepEqual(Object.keys(snapshot.domains[0].windows).sort(), ["day", "prior_day", "prior_week", "week", "yoy_day", "yoy_week"]);
 
     const endpoint = "/communities-toolbox/api/analytics";
     const reader = analyticsReader({
       authorize: request => request.headers.get("authorization") === "Bearer browser-test-only",
-      store: adapters.store, clock: () => now,
+      store: createSnapshotStore({ ...config, token: readerToken }), clock: () => now,
     });
     server = await createServer({
       server: { host: "127.0.0.1", port: 0 }, logLevel: "error",
@@ -249,11 +288,11 @@ test("the opted-in shared workbook feeds the protected Analytics route and compa
     browser = await chromium.launch();
     const page = await browser.newPage({ viewport: { width: 390, height: 900 } });
     const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
-    const readsBeforeUnauthorized = snapshotReads;
+    const readsBeforeUnauthorized = sheet.state().reads;
     const denied = await page.request.get(`${origin}${endpoint}`);
     assert.equal(denied.status(), 403);
     assert.equal(await denied.text(), "");
-    assert.equal(snapshotReads, readsBeforeUnauthorized);
+    assert.equal(sheet.state().reads, readsBeforeUnauthorized);
     await page.route(`${origin}${endpoint}`, route => route.continue({
       headers: { ...route.request().headers(), authorization: "Bearer browser-test-only" },
     }));
@@ -264,7 +303,7 @@ test("the opted-in shared workbook feeds the protected Analytics route and compa
     const response = await responsePromise;
     assert.equal(response.status(), 200);
     assert.equal(response.headers()["cache-control"], "private, no-store");
-    assert.ok(snapshotReads > readsBeforeUnauthorized);
+    assert.ok(sheet.state().reads > readsBeforeUnauthorized);
     const row = page.getByRole("row").filter({ hasText: "Relias Academy" });
     await row.waitFor();
     assert.match(await row.textContent(), /Mar 7, 2026.*Feb 28, 2026/);
