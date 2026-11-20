@@ -1,6 +1,7 @@
 import { googleAnalyticsAdapters, refreshSnapshot } from "./snapshot.mjs";
 
-const { TOOLBOX_ANALYTICS_SHEET_ID, TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID, TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN } = process.env;
+const { TOOLBOX_ANALYTICS_SHEET_ID, TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID,
+  TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN, TOOLBOX_ANALYTICS_ALLOW_SHARED_WORKBOOK } = process.env;
 if (!TOOLBOX_ANALYTICS_SHEET_ID || !TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID || !TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN) {
   throw new Error("Private snapshot spreadsheet ID, existing Toolbox spreadsheet ID, and a short-lived Google access token are required");
 }
@@ -8,6 +9,7 @@ if (!TOOLBOX_ANALYTICS_SHEET_ID || !TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID || !TOOLB
 const snapshot = await refreshSnapshot(googleAnalyticsAdapters({
   spreadsheetId: TOOLBOX_ANALYTICS_SHEET_ID,
   domainsSpreadsheetId: TOOLBOX_ANALYTICS_DOMAINS_SHEET_ID,
+  allowSharedWorkbook: TOOLBOX_ANALYTICS_ALLOW_SHARED_WORKBOOK === "true",
   getAccessToken: () => TOOLBOX_ANALYTICS_GOOGLE_ACCESS_TOKEN,
 }));
 

@@ -150,8 +150,11 @@ test("the default refresh filters verified traffic scopes and leaves unverified 
   });
 });
 
-test("the Toolbox workbook is used only for the existing Domains tab", async () => {
-  assert.throws(() => googleAnalyticsAdapters({ spreadsheetId: "same", domainsSpreadsheetId: "same" }), /separate spreadsheet/);
+test("the roster reads Domains and a matching snapshot workbook requires explicit opt-in", async () => {
+  for (const allowSharedWorkbook of [undefined, false, "true"]) {
+    assert.throws(() => googleAnalyticsAdapters({ spreadsheetId: "same", domainsSpreadsheetId: "same", allowSharedWorkbook }),
+      /separate spreadsheet unless same-workbook storage is explicitly enabled/);
+  }
   const { roster } = googleAnalyticsAdapters({ spreadsheetId: "private", domainsSpreadsheetId: "toolbox", getAccessToken: () => "fixture-token",
     fetchImpl: async (url, options) => {
       assert.match(url, /\/spreadsheets\/toolbox\/values\/Domains$/);
@@ -176,7 +179,7 @@ test("the Sheets adapter writes the complete snapshot without exporting its prev
   assert.deepEqual(JSON.parse(requests[1].options.body), { values: [[JSON.stringify(snapshot)]] });
 });
 
-test("the Analytics route shows private snapshots and switches date and comparison controls", async () => {
+test("the opted-in shared workbook feeds the protected Analytics route and comparison controls", async () => {
   const keys = ["VITE_ADMIN_TOKEN", "VITE_PRIVATE_ANALYTICS"];
   const prior = Object.fromEntries(keys.map(key => [key, process.env[key]]));
   process.env.VITE_ADMIN_TOKEN = "analytics-browser-fixture";
@@ -188,7 +191,8 @@ test("the Analytics route shows private snapshots and switches date and comparis
     let reportCalls = 0;
     let snapshotReads = 0;
     const adapters = googleAnalyticsAdapters({
-      spreadsheetId: "private-fixture", domainsSpreadsheetId: "toolbox-fixture", getAccessToken: () => "fixture-token",
+      spreadsheetId: "toolbox-fixture", domainsSpreadsheetId: "toolbox-fixture", allowSharedWorkbook: true,
+      getAccessToken: () => "fixture-token",
       fetchImpl: async (url, options) => {
         assert.equal(options.headers.Authorization, "Bearer fixture-token");
         const { hostname, pathname, searchParams } = new URL(url);
@@ -204,7 +208,7 @@ test("the Analytics route shows private snapshots and switches date and comparis
           assert.equal(method, "GET");
           return Response.json({ values: [["ID", "Name"], ...(await roster()).map(row => [row.id, row.name])] });
         }
-        assert.equal(pathname, "/v4/spreadsheets/private-fixture/values/Analytics!A1");
+        assert.equal(pathname, "/v4/spreadsheets/toolbox-fixture/values/Analytics!A1");
         if (method === "PUT") {
           assert.equal(searchParams.get("valueInputOption"), "RAW");
           const { values } = JSON.parse(options.body);

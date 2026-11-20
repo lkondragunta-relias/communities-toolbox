@@ -169,8 +169,10 @@ export function analyticsReader({ authorize, store, clock = () => new Date() }) 
   };
 }
 
-export function googleAnalyticsAdapters({ getAccessToken, spreadsheetId, domainsSpreadsheetId, fetchImpl = fetch }) {
-  if (domainsSpreadsheetId && domainsSpreadsheetId === spreadsheetId) throw new Error("Analytics snapshots must use a separate spreadsheet");
+export function googleAnalyticsAdapters({ getAccessToken, spreadsheetId, domainsSpreadsheetId, allowSharedWorkbook = false, fetchImpl = fetch }) {
+  if (domainsSpreadsheetId && domainsSpreadsheetId === spreadsheetId && allowSharedWorkbook !== true) {
+    throw new Error("Analytics snapshots require a separate spreadsheet unless same-workbook storage is explicitly enabled");
+  }
   const auth = async url => {
     const token = await getAccessToken();
     if (!token) throw new Error("Google access token unavailable");
