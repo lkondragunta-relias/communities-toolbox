@@ -4,7 +4,7 @@ Interactive product roadmap viewer built with React and Vite. Initiative data li
 
 ### Domain analytics
 
-The Analytics view shows the latest two completed-date windows and optional comparisons. Its domain names and stable IDs come from the existing Toolbox workbook's `Domains` tab (`Title` or `ID`, and `Name` or `Label`). Unmapped domains show **Unavailable** and are not queried in GA4. Relias Academy uses verified property totals. Nurse Recruiting, Clinician, FreeCME, Wound Care, WoundCare Blog, and Relias.com show **Partial** with sessions, total users, and new users for their configured production hosts and streams. Their purchase, conversion, and average order value metrics stay blank until the relevant event coverage is verified. No demonstration or live metrics are bundled with the frontend.
+The Analytics view shows the latest two completed-date windows and optional comparisons. Its domain names and stable IDs come from the existing Toolbox workbook's `Domains` tab (`Title` or `ID`, and `Name` or `Label`). Unmapped domains show **Unavailable** and are not queried in GA4. Relias Academy uses verified property totals. Nurse Recruiting, Clinician, FreeCME, Wound Care, WoundCare Blog, and Relias.com show **Partial** with traffic for their configured production hosts and streams. Clinician also reports purchases and purchase revenue for that same scope. The other scoped properties do not report purchases or revenue, and none of these scoped properties reports conversion or average order value. No demonstration or live metrics are bundled with the frontend.
 
 #### Existing Project nighttime automation
 
@@ -50,7 +50,8 @@ Apps Script. Google Sheets does not connect to GA4. No GA4 API client or combine
   Google enforces the workbook's Viewer access at read time. The app also rejects callers outside
   `relias.com` or when the active identity differs from the execution identity. Confirm the `/exec` URL
   rejects signed-out visitors and Relias users without workbook access, and works for a permitted user.
-- Only then set `VITE_GOOGLE_ANALYTICS_DASHBOARD_URL` to the verified `/exec` URL for the Toolbox build. The
+- Only then set the GitHub Actions repository variable `VITE_GOOGLE_ANALYTICS_DASHBOARD_URL` to the verified
+  `/exec` URL for the Toolbox build. The
   Analytics tab opens it in a new tab; GitHub Pages does not fetch or serve the data. Keep
   `VITE_PRIVATE_ANALYTICS` off on Pages. `noindex` is not access control.
 

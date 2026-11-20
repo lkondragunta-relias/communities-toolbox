@@ -154,6 +154,22 @@ test("the default refresh filters verified traffic scopes and leaves unverified 
     sessions: 100, totalUsers: 80, newUsers: 40, purchaseRevenue: null, ecommercePurchases: null,
     sessionKeyEventRate: null, averagePurchaseRevenue: null,
   });
+  const clinician = find("clinician");
+  assert.equal(clinician.url, "https://analytics.google.com/analytics/web/#/a43448685p286492365/reports/intelligenthome");
+  for (const { payload } of queried.filter(item => item.id === "clinician")) {
+    assert.deepEqual(payload.metrics.map(metric => metric.name), ["sessions", "totalUsers", "newUsers", "purchaseRevenue", "ecommercePurchases"]);
+    assert.deepEqual(payload.dimensionFilter.andGroup.expressions, [
+      { filter: { fieldName: "streamId", stringFilter: { matchType: "EXACT", value: "2795304286" } } },
+      { filter: { fieldName: "hostName", inListFilter: { values: ["www.clinician.com"], caseSensitive: true } } },
+    ]);
+  }
+  assert.equal(Object.keys(clinician.windows).length, 6);
+  for (const { metrics } of Object.values(clinician.windows)) {
+    assert.equal(metrics.purchaseRevenue, 62.7);
+    assert.equal(metrics.ecommercePurchases, 3);
+    assert.equal(metrics.sessionKeyEventRate, null);
+    assert.equal(metrics.averagePurchaseRevenue, null);
+  }
 });
 
 const writerToken = "synthetic-writer-token-0123456789abcdef";
@@ -309,11 +325,28 @@ test("the generated Google dashboard loads the shared UI through Apps Script RPC
   execFileSync(process.execPath, ["scripts/analytics/google-dashboard/build.mjs"], { stdio: "pipe" });
   const html = readFileSync(new URL("../dist-google-analytics-dashboard/Dashboard.html", import.meta.url), "utf8");
   const snapshot = await refreshSnapshot({ store: memory(), now, gaReport: fixture });
+  const academyRow = snapshot.domains[0];
+  for (const [id, name, currency, revenue, sessions] of [
+    ["zero-revenue", "A Zero Revenue", "USD", 0, 200],
+    ["no-revenue", "A No Revenue", "CAD", null, 300],
+  ]) {
+    snapshot.domains.push({
+      ...academyRow, id, name, currency, url: undefined,
+      windows: { ...academyRow.windows, day: {
+        ...academyRow.windows.day, metrics: { ...academyRow.windows.day.metrics, purchaseRevenue: revenue, sessions },
+      } },
+    });
+  }
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
     await page.clock.setFixedTime(now);
     await page.addInitScript(fixtureSnapshot => {
+      if (location.search === "?varied") {
+        const row = fixtureSnapshot.domains.find(row => row.id === "zero-revenue");
+        row.windows.day = { ...row.windows.day, startDate: "2026-03-06", endDate: "2026-03-06" };
+        row.windows.prior_day = { ...row.windows.prior_day, startDate: "2026-02-27", endDate: "2026-02-27" };
+      }
       globalThis.google = { script: { run: {
         withSuccessHandler(handler) { this.success = handler; return this; },
         withFailureHandler() { return this; },
@@ -329,10 +362,37 @@ test("the generated Google dashboard loads the shared UI through Apps Script RPC
     const row = page.getByRole("row").filter({ hasText: "Relias Academy" });
     await row.waitFor();
     assert.match(await row.textContent(), /\$20\.90/);
+    const sort = page.getByLabel("Sort domains");
+    const compare = page.getByLabel("Compare to");
+    const currentDates = page.getByTestId("analytics-current-dates");
+    const comparisonDates = page.getByTestId("analytics-comparison-dates");
+    const dates = async locator => (await locator.textContent()).replace(/\s+/g, " ").trim();
+    const domains = page.getByRole("rowheader");
+    assert.equal(await dates(currentDates), "Mar 7");
+    assert.equal(await dates(comparisonDates), "Mar 7, 2026 vs. Feb 28, 2026");
+    await compare.selectOption("yoy");
+    assert.equal(await dates(comparisonDates), "Mar 7, 2026 vs. Mar 8, 2025");
+    assert.equal(await sort.inputValue(), "purchaseRevenue");
+    assert.match(await domains.nth(0).textContent(), /Relias Academy/);
+    assert.match(await domains.nth(1).textContent(), /A Zero Revenue/);
+    assert.match(await domains.nth(2).textContent(), /A No Revenue/);
+    await sort.selectOption("sessions");
+    assert.match(await domains.first().textContent(), /A No Revenue/);
     await page.getByRole("button", { name: "Last 7 days" }).click();
-    await page.getByLabel("Compare to").selectOption("yoy");
+    assert.match(await dates(currentDates), /^Mar 1.*7, 2026$/);
+    await compare.selectOption("prior");
+    assert.match(await dates(comparisonDates), /^Mar 1.*7, 2026 vs\. Feb 22.*28, 2026$/);
+    await compare.selectOption("yoy");
+    assert.match(await dates(comparisonDates), /^Mar 1.*7, 2026 vs\. Mar 2.*8, 2025$/);
     assert.match(await row.textContent(), /Mar 1.*7, 2026.*Mar 2.*8, 2025/);
+    await compare.selectOption("off");
+    assert.equal(await comparisonDates.isVisible(), false);
     assert.deepEqual(requests, ["https://dashboard.example/"]);
+    await page.clock.setFixedTime(new Date("2026-03-08T16:00:00Z"));
+    await page.goto("https://dashboard.example/?varied");
+    await row.waitFor();
+    assert.equal(await dates(currentDates), "Dates vary by domain. See the table.");
+    assert.equal(await dates(comparisonDates), "Dates vary by domain. See the table.");
   } finally {
     await browser.close();
   }

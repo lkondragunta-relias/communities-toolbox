@@ -6,11 +6,19 @@ const enabled = import.meta.env.VITE_PRIVATE_ANALYTICS === "true";
 const googleDashboard = /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(import.meta.env.VITE_GOOGLE_ANALYTICS_DASHBOARD_URL)
   ? import.meta.env.VITE_GOOGLE_ANALYTICS_DASHBOARD_URL : null;
 const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
+const shortDateFormat = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+const windowDate = date => new Date(`${date}T00:00:00Z`);
 const rangeLabel = window => {
-  const start = new Date(`${window.startDate}T00:00:00Z`);
-  const end = new Date(`${window.endDate}T00:00:00Z`);
+  const start = windowDate(window.startDate);
+  const end = windowDate(window.endDate);
   return window.startDate === window.endDate ? dateFormat.format(start) : dateFormat.formatRange(start, end);
 };
+
+function dateSummary(labels, unavailable) {
+  const dates = new Set(labels);
+  if (dates.size > 1) return "Dates vary by domain. See the table.";
+  return dates.values().next().value ?? unavailable;
+}
 
 function formatMetric(key, value, currency) {
   if (!Number.isFinite(value)) return "—";
@@ -34,7 +42,7 @@ export default function AnalyticsView({ loadSnapshot = googleDashboard ? null : 
   const [period, setPeriod] = useState("day");
   const [comparison, setComparison] = useState("prior");
   const [search, setSearch] = useState("");
-  const [sortKey, setSortKey] = useState("sessions");
+  const [sortKey, setSortKey] = useState("purchaseRevenue");
   const [snapshot, setSnapshot] = useState(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
@@ -67,14 +75,31 @@ export default function AnalyticsView({ loadSnapshot = googleDashboard ? null : 
   if (error) return <div className="analytics__panel"><p role="alert">{error}</p><button type="button" className="app__ghost-btn" onClick={() => { setError(""); setAttempt(value => value + 1); }}>Retry</button></div>;
   if (!snapshot) return <p role="status">Loading analytics…</p>;
 
+  const comparisonKey = `${comparison}_${period}`;
+  const currentDates = [];
+  const comparisonDates = [];
+  for (const row of snapshot.domains) {
+    const current = row.windows?.[period];
+    if (!current) continue;
+    currentDates.push(period === "day" ? shortDateFormat.format(windowDate(current.startDate)) : rangeLabel(current));
+    const baseline = comparison !== "off" && row.status !== "Stale" ? row.windows?.[comparisonKey] : null;
+    if (baseline) comparisonDates.push(`${rangeLabel(current)} vs. ${rangeLabel(baseline)}`);
+  }
+
   const domains = snapshot.domains.filter(row => `${row.name} ${row.host ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()))
     .sort((a, b) => {
       const byName = a.name.localeCompare(b.name);
       if (sortKey === "name") return byName;
+      const value = row => row.status !== "Stale" ? row.windows?.[period]?.metrics[sortKey] ?? -Infinity : -Infinity;
+      const aValue = value(a);
+      const bValue = value(b);
+      if (sortKey === "purchaseRevenue") {
+        const byAvailability = Number(!Number.isFinite(aValue)) - Number(!Number.isFinite(bValue));
+        if (byAvailability) return byAvailability;
+      }
       if (!a.currency || !b.currency) return Number(!a.currency) - Number(!b.currency) || byName;
       if (sortKey === "purchaseRevenue" && a.currency !== b.currency) return a.currency.localeCompare(b.currency);
-      const value = row => row.status !== "Stale" ? row.windows?.[period]?.metrics[sortKey] ?? -Infinity : -Infinity;
-      if (value(a) !== value(b)) return value(a) > value(b) ? -1 : 1;
+      if (aValue !== bValue) return aValue > bValue ? -1 : 1;
       return byName;
     });
 
@@ -88,13 +113,21 @@ export default function AnalyticsView({ loadSnapshot = googleDashboard ? null : 
                 aria-pressed={period === key} onClick={() => setPeriod(key)}>{label}</button>
             ))}
           </div>
+          <p aria-live="polite" className="analytics__date-label" data-testid="analytics-current-dates">
+            {dateSummary(currentDates, "Reporting dates unavailable")}
+          </p>
           <p>GA4 may revise recent figures. Dates use each property’s reporting time zone.</p>
         </div>
-        <label>Compare to <select value={comparison} onChange={event => setComparison(event.target.value)}>
-          <option value="prior">Previous period</option>
-          <option value="yoy">Same period last year</option>
-          <option value="off">No comparison</option>
-        </select></label>
+        <div>
+          <label>Compare to <select value={comparison} onChange={event => setComparison(event.target.value)}>
+            <option value="prior">Previous period</option>
+            <option value="yoy">Same period last year</option>
+            <option value="off">No comparison</option>
+          </select></label>
+          <p aria-live="polite" className="analytics__date-label" data-testid="analytics-comparison-dates">
+            {comparison !== "off" ? dateSummary(comparisonDates, "Comparison dates unavailable") : null}
+          </p>
+        </div>
       </div>
       <div className="analytics__panel">
         <div className="analytics__controls">
@@ -113,7 +146,7 @@ export default function AnalyticsView({ loadSnapshot = googleDashboard ? null : 
             <thead><tr><th scope="col">Domain</th>{metrics.map(([key, name]) => <th key={key} scope="col">{name}</th>)}<th scope="col">Data status</th></tr></thead>
             <tbody>{domains.map(row => {
               const current = row.windows?.[period];
-              const baseline = row.status !== "Stale" && comparison !== "off" ? row.windows?.[`${comparison}_${period}`] : null;
+              const baseline = row.status !== "Stale" && comparison !== "off" ? row.windows?.[comparisonKey] : null;
               const link = /^https:\/\/analytics\.google\.com\/analytics\/web\/#\/a\d+p\d+\/reports\/intelligenthome$/.test(row.url) ? row.url : null;
               return <tr key={row.id}>
                 <th scope="row">{link ? <a href={link} target="_blank" rel="noopener noreferrer">{row.name} ↗</a> : row.name}

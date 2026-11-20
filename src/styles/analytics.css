@@ -5,6 +5,8 @@
 .analytics .analytics__panel.analytics__controls { padding: 14px 16px; }
 .analytics__controls h2 { margin: 0; font-size: 17px; }
 .analytics__controls p { margin: 6px 0 0; font-size: 12px; color: var(--text-muted); }
+.analytics__controls .analytics__date-label { color: var(--text); font-weight: 650; }
+.analytics__date-label:empty { display: none; }
 .analytics__filters { display: flex; flex-wrap: wrap; gap: 8px; }
 .analytics select, .analytics input { min-height: 36px; max-width: 100%; padding: 5px 8px; border: 1px solid var(--border-hover); border-radius: 6px; background: var(--bg-elevated); color: var(--text); font: inherit; }
 .analytics__scroll { position: relative; overflow-x: auto; }

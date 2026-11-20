@@ -14,7 +14,11 @@ const traffic = (propertyId, streamId, ...hosts) => ({
 export const verifiedMappings = new Map([
   ["relias-academy", academy],
   ["nurse-enablement", traffic("359852607", "12850525022", "recruit.nurse.com")],
-  ["clinician", traffic("286492365", "2795304286", "www.clinician.com")],
+  ["clinician", {
+    ...traffic("286492365", "2795304286", "www.clinician.com"),
+    url: "https://analytics.google.com/analytics/web/#/a43448685p286492365/reports/intelligenthome",
+    includePurchases: true,
+  }],
   ["freecme", traffic("286503363", "2796722651", "www.freecme.com", "info.freecme.com")],
   ["wound-care", traffic("286565352", "2797075565", "www.wcei.net")],
   ["woundcare-blog", traffic("286565352", "2797075565", "blog.wcei.net")],
@@ -76,7 +80,9 @@ function decodeReport(report, ranges, property, reportKeys) {
 
 export function reportRequests(property, now) {
   const ranges = Object.entries(reportingWindows(reportingDate(now, property.timeZone)));
-  const reportKeys = property.scope ? trafficKeys : keys;
+  const reportKeys = property.scope
+    ? property.includePurchases ? [...trafficKeys, "purchaseRevenue", "ecommercePurchases"] : trafficKeys
+    : keys;
   const dimensionFilter = property.scope && {
     andGroup: { expressions: [
       { filter: { fieldName: "streamId", stringFilter: { matchType: "EXACT", value: property.scope.streamId } } },
@@ -132,7 +138,9 @@ export async function refreshSnapshot({ roster, mappings = verifiedMappings, gaR
       }
       domains.push({
         ...property, windows, status: !property.scope && Object.keys(windows).length === 6 ? "Reported" : "Partial",
-        ...(property.scope ? { reason: "Traffic only; commerce and conversion scope not verified" } : {}),
+        ...(property.scope ? { reason: property.includePurchases
+          ? "Traffic and purchases verified; conversion and average order value not reported"
+          : "Traffic only; commerce and conversion scope not verified" } : {}),
         fetchedAt: now.toISOString(),
       });
     } catch {
