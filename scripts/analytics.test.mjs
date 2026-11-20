@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, rmdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import vm from "node:vm";
 import { chromium } from "playwright";
@@ -9,6 +11,7 @@ import { createServer } from "vite";
 import { comparisonChange, reportingDate, reportingWindows } from "../src/utils/analytics.js";
 import { academy, analyticsReader, parseDomains, refreshSnapshot as refresh, reportRequests, verifiedMappings } from "./analytics/snapshot.mjs";
 import { applyReports, createReportPlan, createSnapshotStore, readToolboxRoster, readWriterToken } from "./analytics/refresh.mjs";
+import { collectGa4Reports } from "./analytics/ga4-mcp.mjs";
 import { MAIN_ENDPOINT } from "../.github/skills/feedback-pipeline/scripts/feedback-api.mjs";
 
 const now = new Date("2026-03-09T01:00:00Z");
@@ -294,6 +297,51 @@ function mcpReports() {
   });
   return { runAt: plan.runAt, reports: Object.fromEntries(reports) };
 }
+
+test("the configured MCP stdio collector passes report arguments unchanged and keeps individual failures private", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "toolbox-mcp-test-"));
+  try {
+    const configPath = join(dir, "mcp-config.json");
+    const plan = createReportPlan(now, mappings);
+    const { reports } = mcpReports();
+    const script = `
+      const { createInterface } = require('node:readline');
+      const [requests, reports] = ${JSON.stringify([plan.requests, reports])};
+      let initialized = false;
+      createInterface({input: process.stdin}).on('line', input => {
+        const {id, method, params} = JSON.parse(input);
+        if (method === 'notifications/initialized') initialized = true;
+        if (id === undefined) return;
+        let result;
+        if (method === 'initialize') result = {protocolVersion: params.protocolVersion, capabilities: {tools: {}}, serverInfo: {name: 'fixture', version: '1'}};
+        if (method === 'tools/list' && initialized) result = params?.cursor
+          ? {tools: [{name:'run_report', inputSchema:{type:'object'}}]}
+          : {tools: [], nextCursor: 'second-page'};
+        if (method === 'tools/call' && params.name === 'run_report') {
+          const request = requests.find(request => JSON.stringify(request.args) === JSON.stringify(params.arguments));
+          result = request && request.id === requests[0].id
+            ? {content: [{type: 'text', text: JSON.stringify(reports[request.id])}]}
+            : {isError: true, content: [{type: 'text', text: 'private error text'}]};
+        }
+        console.log(JSON.stringify({jsonrpc:'2.0', id, result}));
+      });`;
+    const server = { type: "local", command: process.execPath, args: ["-e", script], tools: ["run_report"] };
+    const configure = config => writeFileSync(configPath, JSON.stringify({ mcpServers: { "google-analytics-4": config } }));
+    configure(server);
+    const warnings = [];
+    assert.deepEqual(await collectGa4Reports(plan, { configPath, timeout: 5000, warn: text => warnings.push(text) }), {
+      runAt: plan.runAt, reports: { [plan.requests[0].id]: reports[plan.requests[0].id], [plan.requests[1].id]: null },
+    });
+    assert.deepEqual(warnings, [`Analytics MCP report unavailable for ${plan.requests[1].id}`]);
+    await assert.rejects(collectGa4Reports({ ...plan, requests: plan.requests.slice(1) },
+      { configPath, timeout: 5000, warn: () => {} }), /ANALYTICS_MCP_NO_REPORTS/);
+    configure({ ...server, tools: ["get_property_details"] });
+    await assert.rejects(collectGa4Reports(plan, { configPath }), /ANALYTICS_MCP_CONFIG_INVALID/);
+  } finally {
+    rmSync(join(dir, "mcp-config.json"), { force: true });
+    rmdirSync(dir);
+  }
+});
 
 test("the refresh leaves the existing table untouched if every MCP report fails", async () => {
   const sheet = await sheetFixture();

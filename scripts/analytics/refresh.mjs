@@ -184,20 +184,27 @@ async function main() {
     console.log(JSON.stringify(createReportPlan(new Date())));
     return;
   }
-  if (!["check", "apply"].includes(command)) throw new Error("Usage: node scripts/analytics/refresh.mjs plan|check|apply");
+  if (!["check", "apply", "run"].includes(command)) throw new Error("ANALYTICS_COMMAND_INVALID");
+  const dryRun = command === "run" && process.argv[3] === "--dry-run";
+  if (process.argv.length !== (dryRun ? 4 : 3)) throw new Error("ANALYTICS_COMMAND_INVALID");
   const endpoint = readEndpoint();
   const store = createSnapshotStore({ endpoint, token: readWriterToken() });
-  if (command === "check") {
-    const snapshot = await store.read();
-    if (snapshot?.version !== 1 || !Array.isArray(snapshot.domains)) throw new Error("ANALYTICS_READ_INVALID");
+  let input;
+  if (command === "apply") {
+    input = JSON.parse(readFileSync(0, "utf8"));
+  } else {
+    await store.read();
     console.log("Protected Analytics snapshot read verified.");
-    return;
+    if (command === "check") return;
+    const { collectGa4Reports } = await import("./ga4-mcp.mjs");
+    input = await collectGa4Reports(createReportPlan(new Date()));
   }
-  const result = await applyReports(JSON.parse(readFileSync(0, "utf8")), {
-    store, roster: () => readToolboxRoster(endpoint),
+  const result = await applyReports(input, {
+    store: dryRun ? { read: store.read, write: async () => {} } : store,
+    roster: () => readToolboxRoster(endpoint),
   });
-  console.log(`Analytics snapshot verified: ${result.domains} domains, ${result.incomplete} mapped domains incomplete.`);
-  if (result.incomplete) process.exitCode = 1;
+  console.log(`${dryRun ? "Analytics dry run (no Sheet write)" : "Analytics snapshot verified"}: ${result.domains} domains, ${result.incomplete} mapped domains incomplete.`);
+  if (result.incomplete || (command === "run" && Object.values(input.reports).includes(null))) process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

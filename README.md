@@ -12,6 +12,14 @@ Use the reviewed code in the Project's authorized workspace and run only one wri
 using its **Google Analytics 4 MCP** connection, then writes to the existing private workbook through the Toolbox
 Apps Script. Google Sheets does not connect to GA4. No GA4 API client or combined Google credential is needed.
 
+For the existing local nightly job, run `npm ci` in the pinned checkout and then
+`node scripts/analytics/refresh.mjs run`. It uses the enabled `google-analytics-4` stdio server from the
+runner's `~/.copilot/mcp-config.json` and requires `run_report` in that server's tool allowlist. It does not need
+the dynamic Copilot tool catalog. `run --dry-run` performs the same reads and validation without writing to Sheets.
+Do not install another schedule or copy MCP credentials into the repository.
+
+For manual runs using the dynamic tool catalog:
+
 1. Run `node scripts/analytics/refresh.mjs check` to verify the protected snapshot read before pulling reports.
    The job receives `TOOLBOX_ANALYTICS_WRITE_TOKEN` through its protected environment. If it is unset on macOS,
    the helper reads the dedicated `communities-toolbox-analytics-writer` password item in the login Keychain
